@@ -72,6 +72,7 @@ const initialFixedExpense: FixedExpenseDraft = {
   category: 'Hogar',
   dueDay: 1,
   ownerLabel: '',
+  startsOn: todayLocalIso().slice(0, 7) + '-01',
 }
 
 const initialScenario: ScenarioDraft = {
@@ -201,34 +202,54 @@ function App() {
     )
   }, [categoryFilter, snapshot])
 
+  const effectiveFixedPeriod = selectedPeriod || todayLocalIso().slice(0, 7)
+  const visibleFixedExpenses = useMemo(() => {
+    if (!snapshot) {
+      return []
+    }
+
+    const periods =
+      periodMode === 'all' ? snapshot.availablePeriods : [effectiveFixedPeriod]
+
+    return periods.flatMap((period) =>
+      filteredFixedExpenses.filter((item) => isFixedExpenseActiveForPeriod(item, period)),
+    )
+  }, [effectiveFixedPeriod, filteredFixedExpenses, periodMode, snapshot])
+
   const metrics = useMemo(() => {
     if (!snapshot) {
       return null
     }
 
-    const monthsCount = periodMode === 'all' ? Math.max(snapshot.availablePeriods.length, 1) : 1
+    const months = periodMode === 'all' ? snapshot.availablePeriods : [effectiveFixedPeriod]
     const visibleIncome = periodTransactions
       .filter((item) => item.type === 'income')
       .reduce((sum, item) => sum + item.amount, 0)
     const visibleVariableExpenses = visibleTransactions
       .filter((item) => item.type === 'expense')
       .reduce((sum, item) => sum + item.amount, 0)
-    const visibleFixedExpenses =
-      filteredFixedExpenses.reduce((sum, item) => sum + item.amount, 0) * monthsCount
-    const totalExpenses = visibleVariableExpenses + visibleFixedExpenses
+    const totalFixedExpensesForPeriods = months.reduce(
+      (sum, period) =>
+        sum +
+        filteredFixedExpenses
+          .filter((item) => isFixedExpenseActiveForPeriod(item, period))
+          .reduce((periodSum, item) => periodSum + item.amount, 0),
+      0,
+    )
+    const totalExpenses = visibleVariableExpenses + totalFixedExpensesForPeriods
     const balance = visibleIncome - totalExpenses
     const coverage = visibleIncome === 0 ? 0 : (totalExpenses / visibleIncome) * 100
 
     return {
-      monthsCount,
+      monthsCount: months.length,
       visibleIncome,
       visibleVariableExpenses,
-      visibleFixedExpenses,
+      visibleFixedExpenses: totalFixedExpensesForPeriods,
       totalExpenses,
       balance,
       coverage,
     }
-  }, [filteredFixedExpenses, periodMode, periodTransactions, snapshot, visibleTransactions])
+  }, [effectiveFixedPeriod, filteredFixedExpenses, periodMode, periodTransactions, snapshot, visibleTransactions])
 
   const expenseCategories = useMemo(() => {
     if (!snapshot) {
@@ -241,7 +262,7 @@ function App() {
   const categorySummary = useMemo(() => {
     const expenseMap = new Map<string, number>()
 
-    for (const item of filteredFixedExpenses) {
+    for (const item of visibleFixedExpenses) {
       expenseMap.set(item.category, (expenseMap.get(item.category) ?? 0) + item.amount)
     }
 
@@ -256,7 +277,7 @@ function App() {
     return [...expenseMap.entries()]
       .map(([category, total]) => ({ category, total }))
       .sort((a, b) => b.total - a.total)
-  }, [filteredFixedExpenses, visibleTransactions])
+  }, [visibleFixedExpenses, visibleTransactions])
 
   const scenarioPreview = useMemo(() => {
     if (!snapshot || !metrics) {
@@ -285,7 +306,9 @@ function App() {
 
     const projectedIncome = snapshot.settings.monthlyIncome + scenario.incomeDelta
     const projectedExpenses =
-      snapshot.fixedExpenses.reduce((sum, item) => sum + item.amount, 0) -
+      snapshot.fixedExpenses
+        .filter((item) => isFixedExpenseActiveForPeriod(item, scenarioBasePeriod))
+        .reduce((sum, item) => sum + item.amount, 0) -
       removedFixedTotal +
       addedFixedTotal +
       baseVariableExpenses +
@@ -332,7 +355,7 @@ function App() {
   }
 
   async function removeFixedExpense(id: string) {
-    await withSave(async () => financeStore.deleteFixedExpense(id))
+    await withSave(async () => financeStore.deleteFixedExpense(id, effectiveFixedPeriod))
   }
 
   async function removeScenario(id: string) {
@@ -402,6 +425,7 @@ function App() {
           name: expense.title,
           amount: expense.amount,
           category: expense.category,
+          startsOn: fixedExpense.startsOn,
         })
       } else {
         await financeStore.addTransaction({ ...expense, type: 'expense' })
@@ -430,6 +454,7 @@ function App() {
       name: expense.title,
       amount: expense.amount,
       category: expense.category,
+      startsOn: fixedExpense.startsOn,
     })
     await financeStore.deleteTransaction(editingTarget.id)
   }
@@ -445,12 +470,12 @@ function App() {
         name: expense.title,
         amount: expense.amount,
         category: expense.category,
-      })
+      }, fixedExpense.startsOn.slice(0, 7))
       return
     }
 
     await financeStore.addTransaction(currentDraft)
-    await financeStore.deleteFixedExpense(editingTarget.id)
+    await financeStore.deleteFixedExpense(editingTarget.id, fixedExpense.startsOn.slice(0, 7))
   }
 
   async function analyzeTicket(file: File) {
@@ -503,6 +528,10 @@ function App() {
     setDuplicateConfirmationRequired(false)
     setTicketAnalysis(null)
     setEditingTarget(null)
+    setFixedExpense((current) => ({
+      ...current,
+      startsOn: `${effectiveFixedPeriod}-01`,
+    }))
   }
 
   function applyTicketAnalysisToExpense(analysis: TicketAnalysis, fileName: string) {
@@ -586,6 +615,7 @@ function App() {
       amount: target.amount,
       dueDay: target.dueDay,
       ownerLabel: target.ownerLabel,
+      startsOn: `${effectiveFixedPeriod}-01`,
     })
     setAddFlowMode('manual')
     setIsAddModalOpen(true)
@@ -908,8 +938,14 @@ function App() {
                     <h2>Compromisos recurrentes existentes</h2>
                   </div>
                 </div>
+                <p className="scenario-helper">
+                  Mostrando vigentes en {monthLabel(`${effectiveFixedPeriod}-01`)}. Editar o eliminar
+                  afecta desde ese mes en adelante.
+                </p>
                 <div className="list-block compact-list">
-                  {snapshot.fixedExpenses.map((item) => (
+                  {snapshot.fixedExpenses
+                    .filter((item) => isFixedExpenseActiveForPeriod(item, effectiveFixedPeriod))
+                    .map((item) => (
                     <article className="list-item" key={item.id}>
                       <div>
                         <strong>{item.name}</strong>
@@ -917,6 +953,10 @@ function App() {
                           {item.category}
                           {item.ownerLabel ? ` · ${item.ownerLabel}` : ''} · día {item.dueDay}
                         </p>
+                        <small>
+                          Desde {monthLabel(item.startsOn)}
+                          {item.endsOn ? ` hasta ${monthLabel(item.endsOn)}` : ''}
+                        </small>
                       </div>
                       <div className="item-actions">
                         <span className="pill neutral">{currency(item.amount)}</span>
@@ -1008,7 +1048,9 @@ function App() {
                 <div className="scenario-box">
                   <h3>Gastos fijos que dejarían de existir</h3>
                   <div className="check-list">
-                    {snapshot.fixedExpenses.map((expense) => {
+                    {snapshot.fixedExpenses
+                      .filter((expense) => isFixedExpenseActiveForPeriod(expense, scenarioBasePeriod))
+                      .map((expense) => {
                       const checked = scenario.expenseChanges.some(
                         (item) =>
                           item.changeType === 'remove_fixed' &&
@@ -1420,22 +1462,38 @@ function App() {
                   </label>
 
                   {manualType === 'expense' && expenseKind === 'fixed' ? (
-                    <label>
-                      Día de vencimiento
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={fixedExpense.dueDay}
-                        onChange={(event) =>
-                          setFixedExpense((current) => ({
-                            ...current,
-                            dueDay: Number(event.target.value),
-                          }))
-                        }
-                        required
-                      />
-                    </label>
+                    <>
+                      <label>
+                        Día de vencimiento
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={fixedExpense.dueDay}
+                          onChange={(event) =>
+                            setFixedExpense((current) => ({
+                              ...current,
+                              dueDay: Number(event.target.value),
+                            }))
+                          }
+                          required
+                        />
+                      </label>
+                      <label>
+                        Aplicar desde
+                        <input
+                          type="month"
+                          value={fixedExpense.startsOn.slice(0, 7)}
+                          onChange={(event) =>
+                            setFixedExpense((current) => ({
+                              ...current,
+                              startsOn: `${event.target.value}-01`,
+                            }))
+                          }
+                          required
+                        />
+                      </label>
+                    </>
                   ) : (
                     <label>
                       Detalle
@@ -1812,6 +1870,17 @@ function sanitizeTicketNotes(ticketAnalysis: TicketAnalysis) {
   }
 
   return ticketAnalysis.notes?.trim() ?? ''
+}
+
+function isFixedExpenseActiveForPeriod(
+  expense: Pick<FixedExpense, 'startsOn' | 'endsOn'>,
+  period: string,
+) {
+  const periodStart = `${period}-01`
+  const periodEnd = `${period}-31`
+  const endsOn = expense.endsOn ?? '9999-12-31'
+
+  return expense.startsOn <= periodEnd && endsOn >= periodStart
 }
 
 function normalizeTicketDate(value: string | undefined) {

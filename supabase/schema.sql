@@ -41,6 +41,8 @@ create table if not exists public.fixed_expenses (
   owner_label text not null default '',
   amount numeric(12, 2) not null check (amount >= 0),
   due_day smallint not null check (due_day between 1 and 31),
+  starts_on date not null default date_trunc('month', now())::date,
+  ends_on date,
   notes text,
   is_prorated boolean not null default false,
   is_active boolean not null default true,

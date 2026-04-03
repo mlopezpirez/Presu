@@ -24,10 +24,12 @@ export type FixedExpense = {
   category: string
   dueDay: number
   ownerLabel: string
+  startsOn: string
+  endsOn?: string
   createdAt: string
 }
 
-export type FixedExpenseDraft = Omit<FixedExpense, 'id' | 'createdAt'>
+export type FixedExpenseDraft = Omit<FixedExpense, 'id' | 'createdAt' | 'endsOn'>
 
 export type ScenarioExpenseChange = {
   id: string

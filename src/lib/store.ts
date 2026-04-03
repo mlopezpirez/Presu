@@ -31,6 +31,32 @@ function sortByDate<T extends { createdAt: string }>(items: T[]) {
   return [...items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 }
 
+function monthStart(value: string) {
+  return `${value.slice(0, 7)}-01`
+}
+
+function previousDay(value: string) {
+  const date = new Date(`${value}T00:00:00`)
+  date.setDate(date.getDate() - 1)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isFixedExpenseActiveForPeriod(item: FixedExpense, period: string) {
+  const periodStart = monthStart(period)
+  const periodEnd = `${period}-31`
+  const startsOn = item.startsOn
+  const endsOn = item.endsOn ?? '9999-12-31'
+
+  return startsOn <= periodEnd && endsOn >= periodStart
+}
+
+function fixedExpensesForPeriod(fixedExpenses: FixedExpense[], period: string) {
+  return fixedExpenses.filter((item) => isFixedExpenseActiveForPeriod(item, period))
+}
+
 function getInitialDemoStore(): DemoStore {
   return {
     settings: demoSettings,
@@ -86,8 +112,31 @@ function buildChartPoints(transactions: Transaction[]) {
   }))
 }
 
-function getAvailablePeriods(transactions: Transaction[]) {
-  return [...new Set(transactions.map((item) => item.occurredOn.slice(0, 7)))].sort().reverse()
+function getAvailablePeriods(transactions: Transaction[], fixedExpenses: FixedExpense[]) {
+  const periodSet = new Set<string>()
+
+  for (const item of transactions) {
+    periodSet.add(item.occurredOn.slice(0, 7))
+  }
+
+  for (const item of fixedExpenses) {
+    const start = item.startsOn.slice(0, 7)
+    const end = (item.endsOn ?? monthStart(new Date().toISOString())).slice(0, 7)
+    let cursor = `${start}-01`
+    const last = `${end}-01`
+
+    while (cursor <= last) {
+      periodSet.add(cursor.slice(0, 7))
+      const date = new Date(`${cursor}T00:00:00`)
+      date.setMonth(date.getMonth() + 1)
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      cursor = `${year}-${month}-01`
+    }
+  }
+
+  periodSet.add(monthStart(new Date().toISOString()).slice(0, 7))
+  return [...periodSet].sort().reverse()
 }
 
 function computeScenario(
@@ -95,6 +144,7 @@ function computeScenario(
   settings: FinanceSettings,
   variableExpenses: number,
   fixedExpenses: FixedExpense[],
+  basePeriod: string,
 ): BudgetScenario {
   const removedFixedTotal = item.expenseChanges
     .filter((change) => change.changeType === 'remove_fixed')
@@ -108,7 +158,10 @@ function computeScenario(
     .filter((change) => change.changeType === 'add_variable')
     .reduce((sum, change) => sum + change.amount, 0)
 
-  const activeFixedTotal = fixedExpenses.reduce((sum, expense) => sum + expense.amount, 0)
+  const activeFixedTotal = fixedExpensesForPeriod(fixedExpenses, basePeriod).reduce(
+    (sum, expense) => sum + expense.amount,
+    0,
+  )
   const projectedIncome = settings.monthlyIncome + item.incomeDelta
   const projectedExpenses =
     variableExpenses +
@@ -133,16 +186,21 @@ function buildSnapshot(data: DemoStore, sourceLabel: string, source: FinanceSnap
   const totalVariableExpenses = data.transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
-  const totalFixedExpenses = data.fixedExpenses.reduce((sum, item) => sum + item.amount, 0)
+  const availablePeriods = getAvailablePeriods(data.transactions, data.fixedExpenses)
+  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
+  const totalFixedExpenses = fixedExpensesForPeriod(data.fixedExpenses, latestPeriod.slice(0, 7)).reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  )
 
   return {
     settings: data.settings,
     transactions: sortByDate(data.transactions),
     fixedExpenses: sortByDate(data.fixedExpenses),
     scenarios: data.scenarios.map((item) =>
-      computeScenario(item, data.settings, totalVariableExpenses, data.fixedExpenses),
+      computeScenario(item, data.settings, totalVariableExpenses, data.fixedExpenses, latestPeriod.slice(0, 7)),
     ),
-    availablePeriods: getAvailablePeriods(data.transactions),
+    availablePeriods,
     summary: {
       totalVariableExpenses,
       totalFixedExpenses,
@@ -210,6 +268,8 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     category: item.category_name ?? 'Sin categoría',
     dueDay: item.due_day,
     ownerLabel: item.owner_label ?? '',
+    startsOn: item.starts_on,
+    endsOn: item.ends_on ?? undefined,
     createdAt: item.created_at,
   }))
 
@@ -231,6 +291,8 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
   const totalVariableExpenses = transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
+  const availablePeriods = getAvailablePeriods(transactions, fixedExpenses)
+  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
 
   const scenarios: BudgetScenario[] = (scenariosData ?? []).map((item) =>
     computeScenario(
@@ -247,6 +309,7 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
       settings,
       totalVariableExpenses,
       fixedExpenses,
+      latestPeriod.slice(0, 7),
     ),
   )
 
@@ -255,10 +318,13 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     transactions,
     fixedExpenses,
     scenarios,
-    availablePeriods: getAvailablePeriods(transactions),
+    availablePeriods,
     summary: {
       totalVariableExpenses,
-      totalFixedExpenses: fixedExpenses.reduce((sum, item) => sum + item.amount, 0),
+      totalFixedExpenses: fixedExpensesForPeriod(fixedExpenses, latestPeriod.slice(0, 7)).reduce(
+        (sum, item) => sum + item.amount,
+        0,
+      ),
       monthlyIncome: settings.monthlyIncome,
       chartPoints: buildChartPoints(transactions),
       dataSource: 'supabase',
@@ -287,6 +353,7 @@ async function addDemoFixedExpense(draft: FixedExpenseDraft) {
   data.fixedExpenses.unshift({
     ...draft,
     id: crypto.randomUUID(),
+    endsOn: undefined,
     createdAt: new Date().toISOString(),
   })
   writeDemoStore(data)
@@ -316,9 +383,20 @@ async function deleteDemoTransaction(id: string) {
   writeDemoStore(data)
 }
 
-async function deleteDemoFixedExpense(id: string) {
+async function deleteDemoFixedExpense(id: string, effectiveMonth: string) {
   const data = readDemoStore()
-  data.fixedExpenses = data.fixedExpenses.filter((item) => item.id !== id)
+  const start = monthStart(effectiveMonth)
+  data.fixedExpenses = data.fixedExpenses.flatMap((item) => {
+    if (item.id !== id) {
+      return [item]
+    }
+
+    if (item.startsOn >= start) {
+      return []
+    }
+
+    return [{ ...item, endsOn: previousDay(start) }]
+  })
   writeDemoStore(data)
 }
 
@@ -383,11 +461,34 @@ async function updateDemoTransaction(id: string, draft: TransactionDraft) {
   writeDemoStore(data)
 }
 
-async function updateDemoFixedExpense(id: string, draft: FixedExpenseDraft) {
+async function updateDemoFixedExpense(id: string, draft: FixedExpenseDraft, effectiveMonth: string) {
   const data = readDemoStore()
-  data.fixedExpenses = data.fixedExpenses.map((item) =>
-    item.id === id ? { ...item, ...draft } : item,
-  )
+  const start = monthStart(effectiveMonth)
+  const current = data.fixedExpenses.find((item) => item.id === id)
+  if (!current) {
+    return
+  }
+
+  if (current.startsOn >= start) {
+    data.fixedExpenses = data.fixedExpenses.map((item) =>
+      item.id === id ? { ...item, ...draft, startsOn: start } : item,
+    )
+    writeDemoStore(data)
+    return
+  }
+
+  data.fixedExpenses = [
+    {
+      ...draft,
+      id: crypto.randomUUID(),
+      startsOn: start,
+      endsOn: current.endsOn,
+      createdAt: new Date().toISOString(),
+    },
+    ...data.fixedExpenses.map((item) =>
+      item.id === id ? { ...item, endsOn: previousDay(start) } : item,
+    ),
+  ]
   writeDemoStore(data)
 }
 
@@ -435,24 +536,66 @@ function normalizeRequiredDate(value?: string | null) {
   return normalized
 }
 
-async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft) {
+async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft, effectiveMonth: string) {
   if (!supabase) {
     return
   }
 
-  const { error } = await supabase
+  const start = monthStart(effectiveMonth)
+  const { data: current, error: loadError } = await supabase
+    .from('fixed_expenses')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (loadError) {
+    throw new Error(loadError.message)
+  }
+
+  if (current.starts_on >= start) {
+    const { error } = await supabase
+      .from('fixed_expenses')
+      .update({
+        name: draft.name,
+        category_name: draft.category,
+        owner_label: draft.ownerLabel,
+        amount: draft.amount,
+        due_day: draft.dueDay,
+        starts_on: start,
+      })
+      .eq('id', id)
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return
+  }
+
+  const previousEndsOn = previousDay(start)
+  const { error: closeError } = await supabase
     .from('fixed_expenses')
     .update({
-      name: draft.name,
-      category_name: draft.category,
-      owner_label: draft.ownerLabel,
-      amount: draft.amount,
-      due_day: draft.dueDay,
+      ends_on: previousEndsOn,
     })
     .eq('id', id)
 
-  if (error) {
-    throw new Error(error.message)
+  if (closeError) {
+    throw new Error(closeError.message)
+  }
+
+  const { error: insertError } = await supabase.from('fixed_expenses').insert({
+    name: draft.name,
+    category_name: draft.category,
+    owner_label: draft.ownerLabel,
+    amount: draft.amount,
+    due_day: draft.dueDay,
+    starts_on: start,
+    ends_on: current.ends_on ?? null,
+  })
+
+  if (insertError) {
+    throw new Error(insertError.message)
   }
 }
 
@@ -560,7 +703,42 @@ async function addSupabaseFixedExpense(draft: FixedExpenseDraft) {
     owner_label: draft.ownerLabel,
     amount: draft.amount,
     due_day: draft.dueDay,
+    starts_on: draft.startsOn,
   })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function deleteSupabaseFixedExpense(id: string, effectiveMonth: string) {
+  if (!supabase) {
+    return
+  }
+
+  const start = monthStart(effectiveMonth)
+  const { data: current, error: loadError } = await supabase
+    .from('fixed_expenses')
+    .select('id,starts_on')
+    .eq('id', id)
+    .single()
+
+  if (loadError) {
+    throw new Error(loadError.message)
+  }
+
+  if (current.starts_on >= start) {
+    const { error } = await supabase.from('fixed_expenses').delete().eq('id', id)
+    if (error) {
+      throw new Error(error.message)
+    }
+    return
+  }
+
+  const { error } = await supabase
+    .from('fixed_expenses')
+    .update({ ends_on: previousDay(start) })
+    .eq('id', id)
 
   if (error) {
     throw new Error(error.message)
@@ -608,10 +786,7 @@ async function addSupabaseScenario(draft: ScenarioDraft) {
   }
 }
 
-async function deleteFromSupabase(
-  table: 'transactions' | 'fixed_expenses' | 'budget_scenarios',
-  id: string,
-) {
+async function deleteFromSupabase(table: 'transactions' | 'budget_scenarios', id: string) {
   if (!supabase) {
     return
   }
@@ -646,10 +821,10 @@ export const financeStore = {
       ? updateSupabaseTransaction(id, draft)
       : updateDemoTransaction(id, draft)
   },
-  async updateFixedExpense(id: string, draft: FixedExpenseDraft) {
+  async updateFixedExpense(id: string, draft: FixedExpenseDraft, effectiveMonth: string) {
     return isSupabaseConfigured
-      ? updateSupabaseFixedExpense(id, draft)
-      : updateDemoFixedExpense(id, draft)
+      ? updateSupabaseFixedExpense(id, draft, effectiveMonth)
+      : updateDemoFixedExpense(id, draft, effectiveMonth)
   },
   async addScenario(draft: ScenarioDraft) {
     return isSupabaseConfigured ? addSupabaseScenario(draft) : addDemoScenario(draft)
@@ -664,10 +839,10 @@ export const financeStore = {
       ? deleteFromSupabase('transactions', id)
       : deleteDemoTransaction(id)
   },
-  async deleteFixedExpense(id: string) {
+  async deleteFixedExpense(id: string, effectiveMonth: string) {
     return isSupabaseConfigured
-      ? deleteFromSupabase('fixed_expenses', id)
-      : deleteDemoFixedExpense(id)
+      ? deleteSupabaseFixedExpense(id, effectiveMonth)
+      : deleteDemoFixedExpense(id, effectiveMonth)
   },
   async deleteScenario(id: string) {
     return isSupabaseConfigured

@@ -18,26 +18,27 @@ insert into public.fixed_expenses (
   category_name,
   amount,
   due_day,
+  starts_on,
   notes,
   is_prorated
 )
 select *
 from (
   values
-    ('UCM', 'Salud', 2640, 10, null, false),
-    ('Estacionamiento', 'Vehículo', 2500, 10, null, false),
-    ('Angirú', 'Educación', 8500, 10, null, false),
-    ('Camioneta Camilo', 'Vehículo', 4000, 10, null, false),
-    ('Boletos comunes', 'Vehículo', 4988, 10, null, false),
-    ('Boletos Escuela', 'Vehículo', 2640, 10, null, false),
-    ('Contribución + patente (prorrateado)', 'Vehículo', 6152, 10, null, true),
-    ('Primaria (prorrateado)', 'Educación', 1079, 10, null, true),
-    ('Fondo de Solidaridad', 'Educación', 1638, 10, null, false),
-    ('Celular Mauri', 'Servicios', 1363, 10, null, false),
-    ('ADSL + Disney', 'Servicios', 2420, 10, null, false),
-    ('Tarjeta fija Mauri', 'Tarjetas', 4423, 10, null, false),
-    ('Cuota auto actual', 'Vehículo', 15000, 10, null, false)
-) as fixed_data(name, category_name, amount, due_day, notes, is_prorated)
+    ('UCM', 'Salud', 2640, 10, date '2026-03-01', null, false),
+    ('Estacionamiento', 'Vehículo', 2500, 10, date '2026-03-01', null, false),
+    ('Angirú', 'Educación', 8500, 10, date '2026-03-01', null, false),
+    ('Camioneta Camilo', 'Vehículo', 4000, 10, date '2026-03-01', null, false),
+    ('Boletos comunes', 'Vehículo', 4988, 10, date '2026-03-01', null, false),
+    ('Boletos Escuela', 'Vehículo', 2640, 10, date '2026-03-01', null, false),
+    ('Contribución + patente (prorrateado)', 'Vehículo', 6152, 10, date '2026-03-01', null, true),
+    ('Primaria (prorrateado)', 'Educación', 1079, 10, date '2026-03-01', null, true),
+    ('Fondo de Solidaridad', 'Educación', 1638, 10, date '2026-03-01', null, false),
+    ('Celular Mauri', 'Servicios', 1363, 10, date '2026-03-01', null, false),
+    ('ADSL + Disney', 'Servicios', 2420, 10, date '2026-03-01', null, false),
+    ('Tarjeta fija Mauri', 'Tarjetas', 4423, 10, date '2026-03-01', null, false),
+    ('Cuota auto actual', 'Vehículo', 15000, 10, date '2026-03-01', null, false)
+) as fixed_data(name, category_name, amount, due_day, starts_on, notes, is_prorated)
 where not exists (
   select 1
   from public.fixed_expenses existing

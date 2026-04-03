@@ -78,6 +78,7 @@ export const demoFixedExpenses: FixedExpense[] = [
     category: 'Salud',
     dueDay: 10,
     ownerLabel: '',
+    startsOn: '2026-03-01',
     createdAt: new Date().toISOString(),
   },
   {
@@ -87,6 +88,7 @@ export const demoFixedExpenses: FixedExpense[] = [
     category: 'Educación',
     dueDay: 10,
     ownerLabel: '',
+    startsOn: '2026-03-01',
     createdAt: new Date().toISOString(),
   },
   {
@@ -96,6 +98,7 @@ export const demoFixedExpenses: FixedExpense[] = [
     category: 'Vehículo',
     dueDay: 10,
     ownerLabel: '',
+    startsOn: '2026-03-01',
     createdAt: new Date().toISOString(),
   },
 ]
