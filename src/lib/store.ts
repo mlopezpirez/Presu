@@ -352,17 +352,20 @@ async function addSupabaseTransaction(draft: TransactionDraft) {
     return
   }
 
+  const occurredOn = normalizeRequiredDate(draft.occurredOn)
+  const ticketDate = normalizeOptionalDate(draft.ticketDate)
+
   const { error } = await supabase.from('transactions').insert({
     title: draft.title,
     category_name: draft.category,
     amount: draft.amount,
     type: draft.type,
-    occurred_on: draft.occurredOn,
-    period_month: `${draft.occurredOn.slice(0, 7)}-01`,
-    source_type: 'manual',
+    occurred_on: occurredOn,
+    period_month: `${occurredOn.slice(0, 7)}-01`,
+    source_type: draft.sourceFileName ? 'ticket' : 'manual',
     notes: draft.notes,
     merchant_name: draft.merchantName ?? '',
-    ticket_date: draft.ticketDate ?? null,
+    ticket_date: ticketDate,
     ticket_fingerprint: draft.ticketFingerprint ?? null,
     source_file_name: draft.sourceFileName ?? null,
   })
@@ -393,6 +396,9 @@ async function updateSupabaseTransaction(id: string, draft: TransactionDraft) {
     return
   }
 
+  const occurredOn = normalizeRequiredDate(draft.occurredOn)
+  const ticketDate = normalizeOptionalDate(draft.ticketDate)
+
   const { error } = await supabase
     .from('transactions')
     .update({
@@ -400,11 +406,11 @@ async function updateSupabaseTransaction(id: string, draft: TransactionDraft) {
       category_name: draft.category,
       amount: draft.amount,
       type: draft.type,
-      occurred_on: draft.occurredOn,
-      period_month: `${draft.occurredOn.slice(0, 7)}-01`,
+      occurred_on: occurredOn,
+      period_month: `${occurredOn.slice(0, 7)}-01`,
       notes: draft.notes,
       merchant_name: draft.merchantName ?? '',
-      ticket_date: draft.ticketDate ?? null,
+      ticket_date: ticketDate,
       ticket_fingerprint: draft.ticketFingerprint ?? null,
       source_file_name: draft.sourceFileName ?? null,
     })
@@ -413,6 +419,20 @@ async function updateSupabaseTransaction(id: string, draft: TransactionDraft) {
   if (error) {
     throw new Error(error.message)
   }
+}
+
+function normalizeOptionalDate(value?: string | null) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed ? trimmed : null
+}
+
+function normalizeRequiredDate(value?: string | null) {
+  const normalized = normalizeOptionalDate(value)
+  if (!normalized) {
+    throw new Error('La fecha del movimiento es obligatoria.')
+  }
+
+  return normalized
 }
 
 async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft) {
