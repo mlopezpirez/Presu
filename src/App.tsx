@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import Tesseract from 'tesseract.js'
 import {
   AlertCircle,
   ArrowRightLeft,
   BadgeDollarSign,
   CalendarRange,
+  Camera,
+  CirclePlus,
+  FileImage,
   Filter,
   Landmark,
   LayoutDashboard,
@@ -73,6 +77,8 @@ const initialScenario: ScenarioDraft = {
   expenseChanges: [],
 }
 
+type AddFlowMode = 'menu' | 'manual' | 'ticket'
+
 function App() {
   const [snapshot, setSnapshot] = useState<FinanceSnapshot | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving'>('loading')
@@ -93,6 +99,13 @@ function App() {
   const [scenarioItemType, setScenarioItemType] = useState<'add_fixed' | 'add_variable'>(
     'add_variable',
   )
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [addFlowMode, setAddFlowMode] = useState<AddFlowMode>('menu')
+  const [manualType, setManualType] = useState<'expense' | 'income'>('expense')
+  const [expenseKind, setExpenseKind] = useState<'variable' | 'fixed'>('variable')
+  const [isAnalyzingTicket, setIsAnalyzingTicket] = useState(false)
+  const [ticketImageName, setTicketImageName] = useState('')
+  const [ocrPreview, setOcrPreview] = useState('')
 
   useEffect(() => {
     void loadSnapshot()
@@ -293,13 +306,37 @@ function App() {
     }
   }
 
-  async function submitFixedExpense(event: FormEvent<HTMLFormElement>) {
+  async function submitAddFlow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    if (manualType === 'income') {
+      await submitIncome(event)
+      closeAddModal()
+      return
+    }
+
+    if (expenseKind === 'fixed') {
+      await submitFixedFromDraft()
+      closeAddModal()
+      return
+    }
+
+    await submitExpense(event)
+    closeAddModal()
+  }
+
+  async function submitFixedFromDraft() {
     setStatus('saving')
     setError(null)
 
     try {
-      await financeStore.addFixedExpense(fixedExpense)
+      await financeStore.addFixedExpense({
+        ...fixedExpense,
+        name: expense.title,
+        amount: expense.amount,
+        category: expense.category,
+      })
+      setExpense(initialExpense)
       setFixedExpense(initialFixedExpense)
       await loadSnapshot()
     } catch (saveError) {
@@ -349,6 +386,51 @@ function App() {
     } catch (saveError) {
       setError(getErrorMessage(saveError))
       setStatus('idle')
+    }
+  }
+
+  function closeAddModal() {
+    setIsAddModalOpen(false)
+    setAddFlowMode('menu')
+    setManualType('expense')
+    setExpenseKind('variable')
+    setExpense(initialExpense)
+    setIncome(initialIncome)
+    setFixedExpense(initialFixedExpense)
+    setTicketImageName('')
+    setOcrPreview('')
+    setIsAnalyzingTicket(false)
+  }
+
+  async function analyzeTicket(file: File) {
+    setAddFlowMode('ticket')
+    setTicketImageName(file.name)
+    setIsAnalyzingTicket(true)
+    setError(null)
+
+    try {
+      const result = await Tesseract.recognize(file, 'spa+eng')
+      const text = result.data.text
+      setOcrPreview(text.trim())
+
+      const amount = extractAmount(text)
+      const category = inferCategory(text)
+      const title = inferTitle(text)
+
+      setManualType('expense')
+      setExpenseKind('variable')
+      setExpense({
+        title,
+        category,
+        amount,
+        type: 'expense',
+        occurredOn: todayLocalIso(),
+        notes: text.trim().slice(0, 1000),
+      })
+    } catch (analyzeError) {
+      setError(getErrorMessage(analyzeError))
+    } finally {
+      setIsAnalyzingTicket(false)
     }
   }
 
@@ -622,152 +704,14 @@ function App() {
               <div className="panel-heading">
                 <div>
                   <p className="section-kicker">Movimientos</p>
-                  <h2>Registrar gastos e ingresos por separado</h2>
+                  <h2>Registrar movimientos</h2>
                 </div>
-                <p className="muted">{visibleTransactions.length} movimientos visibles</p>
-              </div>
-              <div className="entry-grid">
-                <form className="stack-form entry-card" onSubmit={submitExpense}>
-                  <p className="section-kicker">Nuevo gasto</p>
-                  <label>
-                    Descripción
-                    <input
-                      value={expense.title}
-                      onChange={(event) =>
-                        setExpense((current) => ({ ...current, title: event.target.value }))
-                      }
-                      required
-                    />
-                  </label>
-                  <div className="form-row">
-                    <label>
-                      Rubro único
-                      <input
-                        value={expense.category}
-                        onChange={(event) =>
-                          setExpense((current) => ({ ...current, category: event.target.value }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Monto
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={expense.amount}
-                        onChange={(event) =>
-                          setExpense((current) => ({
-                            ...current,
-                            amount: Number(event.target.value),
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                  </div>
-                  <div className="form-row">
-                    <label>
-                      Fecha
-                      <input
-                        type="date"
-                        value={expense.occurredOn}
-                        onChange={(event) =>
-                          setExpense((current) => ({
-                            ...current,
-                            occurredOn: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Detalle o ticket
-                      <input
-                        value={expense.notes}
-                        onChange={(event) =>
-                          setExpense((current) => ({ ...current, notes: event.target.value }))
-                        }
-                        placeholder="Ticket, aclaración, comercio..."
-                      />
-                    </label>
-                  </div>
-                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
-                    <Plus size={16} /> Agregar gasto
+                <div className="panel-actions">
+                  <p className="muted">{visibleTransactions.length} movimientos visibles</p>
+                  <button className="primary-button" type="button" onClick={() => setIsAddModalOpen(true)}>
+                    <CirclePlus size={16} /> Agregar
                   </button>
-                </form>
-
-                <form className="stack-form entry-card" onSubmit={submitIncome}>
-                  <p className="section-kicker">Nuevo ingreso</p>
-                  <label>
-                    Descripción
-                    <input
-                      value={income.title}
-                      onChange={(event) =>
-                        setIncome((current) => ({ ...current, title: event.target.value }))
-                      }
-                      required
-                    />
-                  </label>
-                  <div className="form-row">
-                    <label>
-                      Rubro único
-                      <input
-                        value={income.category}
-                        onChange={(event) =>
-                          setIncome((current) => ({ ...current, category: event.target.value }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Monto
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={income.amount}
-                        onChange={(event) =>
-                          setIncome((current) => ({
-                            ...current,
-                            amount: Number(event.target.value),
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                  </div>
-                  <div className="form-row">
-                    <label>
-                      Fecha
-                      <input
-                        type="date"
-                        value={income.occurredOn}
-                        onChange={(event) =>
-                          setIncome((current) => ({
-                            ...current,
-                            occurredOn: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Detalle
-                      <input
-                        value={income.notes}
-                        onChange={(event) =>
-                          setIncome((current) => ({ ...current, notes: event.target.value }))
-                        }
-                        placeholder="Sueldo, freelance, reintegro..."
-                      />
-                    </label>
-                  </div>
-                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
-                    <Plus size={16} /> Agregar ingreso
-                  </button>
-                </form>
+                </div>
               </div>
 
               <div className="list-block">
@@ -799,85 +743,9 @@ function App() {
                 <div className="panel-heading">
                   <div>
                     <p className="section-kicker">Gastos fijos</p>
-                    <h2>Compromisos recurrentes</h2>
+                    <h2>Compromisos recurrentes existentes</h2>
                   </div>
                 </div>
-                <form className="stack-form" onSubmit={submitFixedExpense}>
-                  <label>
-                    Nombre
-                    <input
-                      value={fixedExpense.name}
-                      onChange={(event) =>
-                        setFixedExpense((current) => ({ ...current, name: event.target.value }))
-                      }
-                      required
-                    />
-                  </label>
-                  <div className="form-row">
-                    <label>
-                      Rubro
-                      <input
-                        value={fixedExpense.category}
-                        onChange={(event) =>
-                          setFixedExpense((current) => ({
-                            ...current,
-                            category: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Responsable
-                      <input
-                        value={fixedExpense.ownerLabel}
-                        onChange={(event) =>
-                          setFixedExpense((current) => ({
-                            ...current,
-                            ownerLabel: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="form-row">
-                    <label>
-                      Monto
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={fixedExpense.amount}
-                        onChange={(event) =>
-                          setFixedExpense((current) => ({
-                            ...current,
-                            amount: Number(event.target.value),
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                    <label>
-                      Día de vencimiento
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={fixedExpense.dueDay}
-                        onChange={(event) =>
-                          setFixedExpense((current) => ({
-                            ...current,
-                            dueDay: Number(event.target.value),
-                          }))
-                        }
-                        required
-                      />
-                    </label>
-                  </div>
-                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
-                    <Plus size={16} /> Agregar fijo
-                  </button>
-                </form>
                 <div className="list-block compact-list">
                   {snapshot.fixedExpenses.map((item) => (
                     <article className="list-item" key={item.id}>
@@ -1164,6 +1032,243 @@ function App() {
           </section>
         </section>
       )}
+
+      {isAddModalOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="panel-heading">
+              <div>
+                <p className="section-kicker">Nuevo movimiento</p>
+                <h2>Elegí cómo querés cargarlo</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={closeAddModal}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            {addFlowMode === 'menu' ? (
+              <div className="entry-grid">
+                <label className="upload-card">
+                  <input
+                    className="hidden-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) {
+                        void analyzeTicket(file)
+                      }
+                    }}
+                  />
+                  <Camera size={24} />
+                  <strong>Sacar foto o subir ticket</strong>
+                  <span>La web analiza el texto y te propone rubro, monto y detalle.</span>
+                </label>
+
+                <button className="upload-card button-card" type="button" onClick={() => setAddFlowMode('manual')}>
+                  <FileImage size={24} />
+                  <strong>Agregar manualmente</strong>
+                  <span>Elegís si es ingreso o gasto y después si ese gasto es fijo o variable.</span>
+                </button>
+              </div>
+            ) : null}
+
+            {addFlowMode !== 'menu' ? (
+              <form className="stack-form" onSubmit={submitAddFlow}>
+                {isAnalyzingTicket ? <p className="scenario-helper">Analizando ticket...</p> : null}
+                {ticketImageName ? <p className="scenario-helper">Archivo: {ticketImageName}</p> : null}
+
+                <div className="form-row">
+                  <label>
+                    Tipo
+                    <select
+                      value={manualType}
+                      onChange={(event) =>
+                        setManualType(event.target.value as 'expense' | 'income')
+                      }
+                    >
+                      <option value="expense">Gasto</option>
+                      <option value="income">Ingreso</option>
+                    </select>
+                  </label>
+
+                  {manualType === 'expense' ? (
+                    <label>
+                      Naturaleza
+                      <select
+                        value={expenseKind}
+                        onChange={(event) =>
+                          setExpenseKind(event.target.value as 'variable' | 'fixed')
+                        }
+                      >
+                        <option value="variable">Variable</option>
+                        <option value="fixed">Fijo</option>
+                      </select>
+                    </label>
+                  ) : (
+                    <label>
+                      Rubro único
+                      <input
+                        value={income.category}
+                        onChange={(event) =>
+                          setIncome((current) => ({ ...current, category: event.target.value }))
+                        }
+                        required
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <label>
+                  Descripción
+                  <input
+                    value={manualType === 'expense' ? expense.title : income.title}
+                    onChange={(event) =>
+                      manualType === 'expense'
+                        ? setExpense((current) => ({ ...current, title: event.target.value }))
+                        : setIncome((current) => ({ ...current, title: event.target.value }))
+                    }
+                    required
+                  />
+                </label>
+
+                <div className="form-row">
+                  <label>
+                    Rubro único
+                    <input
+                      value={manualType === 'expense' ? expense.category : income.category}
+                      onChange={(event) =>
+                        manualType === 'expense'
+                          ? setExpense((current) => ({ ...current, category: event.target.value }))
+                          : setIncome((current) => ({ ...current, category: event.target.value }))
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Monto
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={manualType === 'expense' ? expense.amount : income.amount}
+                      onChange={(event) =>
+                        manualType === 'expense'
+                          ? setExpense((current) => ({
+                              ...current,
+                              amount: Number(event.target.value),
+                            }))
+                          : setIncome((current) => ({
+                              ...current,
+                              amount: Number(event.target.value),
+                            }))
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Fecha
+                    <input
+                      type="date"
+                      value={manualType === 'expense' ? expense.occurredOn : income.occurredOn}
+                      onChange={(event) =>
+                        manualType === 'expense'
+                          ? setExpense((current) => ({
+                              ...current,
+                              occurredOn: event.target.value,
+                            }))
+                          : setIncome((current) => ({
+                              ...current,
+                              occurredOn: event.target.value,
+                            }))
+                      }
+                      required
+                    />
+                  </label>
+
+                  {manualType === 'expense' && expenseKind === 'fixed' ? (
+                    <label>
+                      Día de vencimiento
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={fixedExpense.dueDay}
+                        onChange={(event) =>
+                          setFixedExpense((current) => ({
+                            ...current,
+                            dueDay: Number(event.target.value),
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+                  ) : (
+                    <label>
+                      Detalle
+                      <input
+                        value={manualType === 'expense' ? expense.notes : income.notes}
+                        onChange={(event) =>
+                          manualType === 'expense'
+                            ? setExpense((current) => ({ ...current, notes: event.target.value }))
+                            : setIncome((current) => ({ ...current, notes: event.target.value }))
+                        }
+                        placeholder="Ticket, aclaración, comercio..."
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {manualType === 'expense' && expenseKind === 'fixed' ? (
+                  <div className="form-row">
+                    <label>
+                      Responsable
+                      <input
+                        value={fixedExpense.ownerLabel}
+                        onChange={(event) =>
+                          setFixedExpense((current) => ({
+                            ...current,
+                            ownerLabel: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Detalle
+                      <input
+                        value={expense.notes}
+                        onChange={(event) =>
+                          setExpense((current) => ({ ...current, notes: event.target.value }))
+                        }
+                      />
+                    </label>
+                  </div>
+                ) : null}
+
+                {ocrPreview ? (
+                  <label>
+                    Texto detectado del ticket
+                    <textarea rows={5} value={ocrPreview} readOnly />
+                  </label>
+                ) : null}
+
+                <div className="modal-actions">
+                  <button className="secondary-button" type="button" onClick={closeAddModal}>
+                    Cancelar
+                  </button>
+                  <button className="primary-button" type="submit" disabled={status !== 'idle' || isAnalyzingTicket}>
+                    <Plus size={16} /> Guardar
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
@@ -1191,6 +1296,55 @@ function getErrorMessage(error: unknown) {
   }
 
   return 'Ocurrió un problema inesperado.'
+}
+
+function extractAmount(text: string) {
+  const normalized = text.replace(/\./g, '').replace(/,/g, '.')
+  const matches = normalized.match(/\d+(?:\.\d{1,2})?/g) ?? []
+  const values = matches
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 50 && value < 1000000)
+
+  return values.length > 0 ? Math.max(...values) : 0
+}
+
+function inferCategory(text: string) {
+  const lower = text.toLowerCase()
+
+  if (/(farmashop|farmacia|medic|hospital|ucm)/.test(lower)) {
+    return 'Salud'
+  }
+
+  if (/(disco|tienda inglesa|macro mercado|fresh market|super|merienda|café|almuerzo|helader)/.test(lower)) {
+    return 'Comidas'
+  }
+
+  if (/(ute|ose|adsl|internet|celular|movistar)/.test(lower)) {
+    return 'Servicios'
+  }
+
+  if (/(patente|estacionamiento|boleto|auto|camioneta|lavado)/.test(lower)) {
+    return 'Vehículo'
+  }
+
+  if (/(tarjeta|mastercard|visa)/.test(lower)) {
+    return 'Tarjetas'
+  }
+
+  if (/(bookshop|juguete|libro|ropa|compra)/.test(lower)) {
+    return 'Compras'
+  }
+
+  return 'General'
+}
+
+function inferTitle(text: string) {
+  const firstMeaningfulLine = text
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 3 && !/^\d+$/.test(line))
+
+  return firstMeaningfulLine?.slice(0, 80) ?? 'Ticket importado'
 }
 
 export default App
