@@ -1,0 +1,397 @@
+import { demoFixedExpenses, demoSettings, demoTransactions } from './demoData'
+import { monthLabel } from './format'
+import { isSupabaseConfigured, supabase } from './supabase'
+import type {
+  BudgetScenario,
+  FinanceSettings,
+  FinanceSnapshot,
+  FixedExpense,
+  FixedExpenseDraft,
+  ScenarioDraft,
+  Transaction,
+  TransactionDraft,
+} from '../types'
+
+type DemoScenarioRecord = ScenarioDraft & { id: string; createdAt: string }
+
+type DemoStore = {
+  settings: FinanceSettings
+  transactions: Transaction[]
+  fixedExpenses: FixedExpense[]
+  scenarios: DemoScenarioRecord[]
+}
+
+const demoStoreKey = 'presu-demo-store'
+
+function sortByDate<T extends { createdAt: string }>(items: T[]) {
+  return [...items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+}
+
+function getInitialDemoStore(): DemoStore {
+  return {
+    settings: demoSettings,
+    transactions: demoTransactions,
+    fixedExpenses: demoFixedExpenses,
+    scenarios: [],
+  }
+}
+
+function readDemoStore(): DemoStore {
+  const raw = localStorage.getItem(demoStoreKey)
+  if (!raw) {
+    const initial = getInitialDemoStore()
+    localStorage.setItem(demoStoreKey, JSON.stringify(initial))
+    return initial
+  }
+
+  return JSON.parse(raw) as DemoStore
+}
+
+function writeDemoStore(data: DemoStore) {
+  localStorage.setItem(demoStoreKey, JSON.stringify(data))
+}
+
+function buildChartPoints(transactions: Transaction[]) {
+  const buckets = new Map<string, { income: number; expenses: number }>()
+
+  for (let offset = 5; offset >= 0; offset -= 1) {
+    const date = new Date()
+    date.setMonth(date.getMonth() - offset)
+    const key = date.toISOString().slice(0, 7)
+    buckets.set(key, { income: 0, expenses: 0 })
+  }
+
+  for (const item of transactions) {
+    const key = item.occurredOn.slice(0, 7)
+    const current = buckets.get(key)
+    if (!current) {
+      continue
+    }
+
+    if (item.type === 'income') {
+      current.income += item.amount
+    } else {
+      current.expenses += item.amount
+    }
+  }
+
+  return [...buckets.entries()].map(([key, values]) => ({
+    label: monthLabel(`${key}-01`),
+    income: values.income,
+    expenses: values.expenses,
+  }))
+}
+
+function computeScenario(
+  item: DemoScenarioRecord,
+  settings: FinanceSettings,
+  variableExpenses: number,
+  fixedExpensesTotal: number,
+): BudgetScenario {
+  const projectedIncome = settings.monthlyIncome + item.incomeDelta
+  const projectedExpenses =
+    variableExpenses + fixedExpensesTotal + item.extraExpenseDelta + item.fixedExpenseDelta
+  const projectedBalance = projectedIncome - projectedExpenses
+
+  return {
+    ...item,
+    projectedIncome,
+    projectedExpenses,
+    projectedBalance,
+    hitsSavingsGoal: projectedBalance >= settings.savingsGoal,
+  }
+}
+
+async function getDemoSnapshot(): Promise<FinanceSnapshot> {
+  const data = readDemoStore()
+  const totalVariableExpenses = data.transactions
+    .filter((item) => item.type === 'expense')
+    .reduce((sum, item) => sum + item.amount, 0)
+  const totalFixedExpenses = data.fixedExpenses.reduce((sum, item) => sum + item.amount, 0)
+
+  return {
+    settings: data.settings,
+    transactions: sortByDate(data.transactions),
+    fixedExpenses: sortByDate(data.fixedExpenses),
+    scenarios: data.scenarios.map((item) =>
+      computeScenario(item, data.settings, totalVariableExpenses, totalFixedExpenses),
+    ),
+    summary: {
+      totalVariableExpenses,
+      totalFixedExpenses,
+      monthlyIncome: data.settings.monthlyIncome,
+      chartPoints: buildChartPoints(data.transactions),
+      dataSource: 'demo',
+      dataSourceLabel: 'Modo demo con base marzo',
+    },
+  }
+}
+
+async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado.')
+  }
+
+  const [
+    { data: settingsData, error: settingsError },
+    { data: transactionsData, error: transactionsError },
+    { data: fixedExpensesData, error: fixedExpensesError },
+    { data: scenariosData, error: scenariosError },
+  ] = await Promise.all([
+    supabase.from('finance_settings').select('*').limit(1).maybeSingle(),
+    supabase.from('transactions').select('*').order('occurred_on', { ascending: false }),
+    supabase.from('fixed_expenses').select('*').order('created_at', { ascending: false }),
+    supabase.from('budget_scenarios').select('*').order('created_at', { ascending: false }),
+  ])
+
+  const firstError =
+    settingsError ?? transactionsError ?? fixedExpensesError ?? scenariosError
+  if (firstError) {
+    throw new Error(firstError.message)
+  }
+
+  const settings: FinanceSettings = {
+    monthlyIncome: settingsData?.monthly_income ?? 0,
+    savingsGoal: settingsData?.savings_goal ?? 0,
+  }
+
+  const transactions: Transaction[] = (transactionsData ?? []).map((item) => ({
+    id: item.id,
+    title: item.title,
+    category: item.category_name ?? item.category ?? 'Sin categoría',
+    amount: Number(item.amount),
+    type: item.type,
+    occurredOn: item.occurred_on,
+    notes: item.notes ?? '',
+    createdAt: item.created_at,
+  }))
+
+  const fixedExpenses: FixedExpense[] = (fixedExpensesData ?? []).map((item) => ({
+    id: item.id,
+    name: item.name,
+    amount: Number(item.amount),
+    category: item.category_name ?? item.category ?? 'Sin categoría',
+    dueDay: item.due_day,
+    ownerLabel: item.owner_label ?? '',
+    createdAt: item.created_at,
+  }))
+
+  const totalVariableExpenses = transactions
+    .filter((item) => item.type === 'expense')
+    .reduce((sum, item) => sum + item.amount, 0)
+  const totalFixedExpenses = fixedExpenses.reduce((sum, item) => sum + item.amount, 0)
+
+  const scenarios: BudgetScenario[] = (scenariosData ?? []).map((item) =>
+    computeScenario(
+      {
+        id: item.id,
+        name: item.name,
+        incomeDelta: Number(item.income_delta),
+        extraExpenseDelta: Number(item.extra_expense_delta),
+        fixedExpenseDelta: Number(item.fixed_expense_delta),
+        notes: item.notes ?? '',
+        createdAt: item.created_at,
+      },
+      settings,
+      totalVariableExpenses,
+      totalFixedExpenses,
+    ),
+  )
+
+  return {
+    settings,
+    transactions,
+    fixedExpenses,
+    scenarios,
+    summary: {
+      totalVariableExpenses,
+      totalFixedExpenses,
+      monthlyIncome: settings.monthlyIncome,
+      chartPoints: buildChartPoints(transactions),
+      dataSource: 'supabase',
+      dataSourceLabel: 'Supabase conectado',
+    },
+  }
+}
+
+async function upsertDemoSettings(settings: FinanceSettings) {
+  const data = readDemoStore()
+  writeDemoStore({ ...data, settings })
+}
+
+async function addDemoTransaction(draft: TransactionDraft) {
+  const data = readDemoStore()
+  data.transactions.unshift({
+    ...draft,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  })
+  writeDemoStore(data)
+}
+
+async function addDemoFixedExpense(draft: FixedExpenseDraft) {
+  const data = readDemoStore()
+  data.fixedExpenses.unshift({
+    ...draft,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  })
+  writeDemoStore(data)
+}
+
+async function addDemoScenario(draft: ScenarioDraft) {
+  const data = readDemoStore()
+  data.scenarios.unshift({
+    ...draft,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  })
+  writeDemoStore(data)
+}
+
+async function deleteDemoTransaction(id: string) {
+  const data = readDemoStore()
+  data.transactions = data.transactions.filter((item) => item.id !== id)
+  writeDemoStore(data)
+}
+
+async function deleteDemoFixedExpense(id: string) {
+  const data = readDemoStore()
+  data.fixedExpenses = data.fixedExpenses.filter((item) => item.id !== id)
+  writeDemoStore(data)
+}
+
+async function deleteDemoScenario(id: string) {
+  const data = readDemoStore()
+  data.scenarios = data.scenarios.filter((item) => item.id !== id)
+  writeDemoStore(data)
+}
+
+async function upsertSupabaseSettings(settings: FinanceSettings) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase.from('finance_settings').upsert(
+    {
+      id: 1,
+      monthly_income: settings.monthlyIncome,
+      savings_goal: settings.savingsGoal,
+    },
+    { onConflict: 'id' },
+  )
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function addSupabaseTransaction(draft: TransactionDraft) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase.from('transactions').insert({
+    title: draft.title,
+    category_name: draft.category,
+    amount: draft.amount,
+    type: draft.type,
+    occurred_on: draft.occurredOn,
+    period_month: draft.occurredOn.slice(0, 7) + '-01',
+    source_type: 'manual',
+    notes: draft.notes,
+  })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function addSupabaseFixedExpense(draft: FixedExpenseDraft) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase.from('fixed_expenses').insert({
+    name: draft.name,
+    category_name: draft.category,
+    owner_label: draft.ownerLabel,
+    amount: draft.amount,
+    due_day: draft.dueDay,
+  })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function addSupabaseScenario(draft: ScenarioDraft) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase.from('budget_scenarios').insert({
+    name: draft.name,
+    income_delta: draft.incomeDelta,
+    extra_expense_delta: draft.extraExpenseDelta,
+    fixed_expense_delta: draft.fixedExpenseDelta,
+    notes: draft.notes,
+  })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function deleteFromSupabase(
+  table: 'transactions' | 'fixed_expenses' | 'budget_scenarios',
+  id: string,
+) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase.from(table).delete().eq('id', id)
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+export const financeStore = {
+  async getSnapshot() {
+    return isSupabaseConfigured ? getSupabaseSnapshot() : getDemoSnapshot()
+  },
+  async upsertSettings(settings: FinanceSettings) {
+    return isSupabaseConfigured
+      ? upsertSupabaseSettings(settings)
+      : upsertDemoSettings(settings)
+  },
+  async addTransaction(draft: TransactionDraft) {
+    return isSupabaseConfigured
+      ? addSupabaseTransaction(draft)
+      : addDemoTransaction(draft)
+  },
+  async addFixedExpense(draft: FixedExpenseDraft) {
+    return isSupabaseConfigured
+      ? addSupabaseFixedExpense(draft)
+      : addDemoFixedExpense(draft)
+  },
+  async addScenario(draft: ScenarioDraft) {
+    return isSupabaseConfigured ? addSupabaseScenario(draft) : addDemoScenario(draft)
+  },
+  async deleteTransaction(id: string) {
+    return isSupabaseConfigured
+      ? deleteFromSupabase('transactions', id)
+      : deleteDemoTransaction(id)
+  },
+  async deleteFixedExpense(id: string) {
+    return isSupabaseConfigured
+      ? deleteFromSupabase('fixed_expenses', id)
+      : deleteDemoFixedExpense(id)
+  },
+  async deleteScenario(id: string) {
+    return isSupabaseConfigured
+      ? deleteFromSupabase('budget_scenarios', id)
+      : deleteDemoScenario(id)
+  },
+}
