@@ -480,6 +480,12 @@ textarea:focus {
   margin-bottom: 12px;
 }
 
+.scenario-helper {
+  margin: 10px 0 0;
+  color: #695c4e;
+  font-size: 0.94rem;
+}
+
 .check-list {
   display: grid;
   gap: 10px;

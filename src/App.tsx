@@ -27,7 +27,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { currency, monthLabel } from './lib/format'
+import { currency, monthLabel, todayLocalIso } from './lib/format'
 import { financeStore } from './lib/store'
 import type {
   FinanceSnapshot,
@@ -43,7 +43,7 @@ const initialTransaction: TransactionDraft = {
   category: 'General',
   amount: 0,
   type: 'expense',
-  occurredOn: new Date().toISOString().slice(0, 10),
+  occurredOn: todayLocalIso(),
   notes: '',
 }
 
@@ -76,6 +76,7 @@ function App() {
   const [selectedPeriod, setSelectedPeriod] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [searchFilter, setSearchFilter] = useState('')
+  const [scenarioBasePeriod, setScenarioBasePeriod] = useState('')
   const [scenarioItemLabel, setScenarioItemLabel] = useState('')
   const [scenarioItemCategory, setScenarioItemCategory] = useState('General')
   const [scenarioItemAmount, setScenarioItemAmount] = useState(0)
@@ -92,6 +93,12 @@ function App() {
       setSelectedPeriod(snapshot.availablePeriods[0])
     }
   }, [snapshot, selectedPeriod])
+
+  useEffect(() => {
+    if (snapshot && !scenarioBasePeriod && snapshot.availablePeriods.length > 0) {
+      setScenarioBasePeriod(snapshot.availablePeriods[0])
+    }
+  }, [scenarioBasePeriod, snapshot])
 
   async function loadSnapshot() {
     setStatus('loading')
@@ -192,6 +199,14 @@ function App() {
       return null
     }
 
+    const scenarioBaseTransactions = snapshot.transactions.filter(
+      (item) => item.occurredOn.startsWith(scenarioBasePeriod) && item.type === 'expense',
+    )
+    const baseVariableExpenses = scenarioBaseTransactions.reduce(
+      (sum, item) => sum + item.amount,
+      0,
+    )
+
     const removedFixedTotal = scenario.expenseChanges
       .filter((item) => item.changeType === 'remove_fixed')
       .reduce((sum, item) => sum + item.amount, 0)
@@ -209,19 +224,20 @@ function App() {
       snapshot.fixedExpenses.reduce((sum, item) => sum + item.amount, 0) -
       removedFixedTotal +
       addedFixedTotal +
-      metrics.visibleVariableExpenses +
+      baseVariableExpenses +
       addedVariableTotal +
       scenario.extraExpenseDelta +
       scenario.fixedExpenseDelta
     const projectedBalance = projectedIncome - projectedExpenses
 
     return {
+      baseVariableExpenses,
       projectedIncome,
       projectedExpenses,
       projectedBalance,
       hitsGoal: projectedBalance >= snapshot.settings.savingsGoal,
     }
-  }, [metrics, scenario, snapshot])
+  }, [scenario, scenarioBasePeriod, snapshot, metrics])
 
   async function saveIncome(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -892,6 +908,26 @@ function App() {
               </label>
 
               <div className="scenario-columns">
+                <div className="scenario-box">
+                  <label>
+                    Mes base del escenario
+                    <select
+                      value={scenarioBasePeriod}
+                      onChange={(event) => setScenarioBasePeriod(event.target.value)}
+                    >
+                      {snapshot.availablePeriods.map((period) => (
+                        <option key={period} value={period}>
+                          {monthLabel(`${period}-01`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="scenario-helper">
+                    Variables base tomadas de {monthLabel(`${scenarioBasePeriod || selectedPeriod}-01`)}:{' '}
+                    {currency(scenarioPreview?.baseVariableExpenses ?? 0)}
+                  </p>
+                </div>
+
                 <div className="scenario-box">
                   <h3>Gastos fijos que dejarían de existir</h3>
                   <div className="check-list">
