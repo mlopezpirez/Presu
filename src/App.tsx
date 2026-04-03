@@ -151,6 +151,16 @@ function App() {
     })
   }, [categoryFilter, periodTransactions, searchFilter])
 
+  const filteredFixedExpenses = useMemo(() => {
+    if (!snapshot) {
+      return []
+    }
+
+    return snapshot.fixedExpenses.filter((item) =>
+      categoryFilter === 'all' ? true : item.category === categoryFilter,
+    )
+  }, [categoryFilter, snapshot])
+
   const metrics = useMemo(() => {
     if (!snapshot) {
       return null
@@ -164,7 +174,7 @@ function App() {
       .filter((item) => item.type === 'expense')
       .reduce((sum, item) => sum + item.amount, 0)
     const visibleFixedExpenses =
-      snapshot.fixedExpenses.reduce((sum, item) => sum + item.amount, 0) * monthsCount
+      filteredFixedExpenses.reduce((sum, item) => sum + item.amount, 0) * monthsCount
     const totalExpenses = visibleVariableExpenses + visibleFixedExpenses
     const balance = visibleIncome - totalExpenses
     const coverage = visibleIncome === 0 ? 0 : (totalExpenses / visibleIncome) * 100
@@ -178,7 +188,7 @@ function App() {
       balance,
       coverage,
     }
-  }, [periodMode, periodTransactions, snapshot, visibleTransactions])
+  }, [filteredFixedExpenses, periodMode, periodTransactions, snapshot, visibleTransactions])
 
   const expenseCategories = useMemo(() => {
     if (!snapshot) {
@@ -191,6 +201,10 @@ function App() {
   const categorySummary = useMemo(() => {
     const expenseMap = new Map<string, number>()
 
+    for (const item of filteredFixedExpenses) {
+      expenseMap.set(item.category, (expenseMap.get(item.category) ?? 0) + item.amount)
+    }
+
     for (const item of visibleTransactions) {
       if (item.type !== 'expense') {
         continue
@@ -202,7 +216,7 @@ function App() {
     return [...expenseMap.entries()]
       .map(([category, total]) => ({ category, total }))
       .sort((a, b) => b.total - a.total)
-  }, [visibleTransactions])
+  }, [filteredFixedExpenses, visibleTransactions])
 
   const scenarioPreview = useMemo(() => {
     if (!snapshot || !metrics) {
