@@ -28,6 +28,7 @@ export default async (request) => {
       'Necesito una salida extremadamente fiel y útil para finanzas personales.',
       'Reglas:',
       '- Identifica comercio, fecha del ticket, total final pagado y una descripción breve.',
+      '- amount debe ser el total final completo en pesos, no los centavos ni la parte después del punto o coma.',
       '- Diferencia total real de otros números como serie, ticket, RUT, autorización, caja o terminal.',
       '- Si la fecha no está clara, devuelve occurredOn y ticketDate vacíos.',
       '- category debe ser un solo rubro breve y consistente.',
@@ -141,18 +142,20 @@ async function analyzeTicketFast({ imageDataUrl, ocrText, prompt, sourceFileName
     )
 
     const parsed = JSON.parse(response.output_text)
-    return buildAnalysisPayload(parsed, sourceFileName)
+    return buildAnalysisPayload(parsed, sourceFileName, ocrText)
   } catch (error) {
     return buildOcrFallback(ocrText, sourceFileName, error)
   }
 }
 
-function buildAnalysisPayload(parsed, sourceFileName) {
+function buildAnalysisPayload(parsed, sourceFileName, ocrText) {
   const normalizedDate = normalizeDate(parsed.ticketDate || parsed.occurredOn)
+  const extractedAmount = extractAmount(ocrText)
+  const amount = normalizeModelAmount(parsed.amount, extractedAmount)
   const fingerprint = buildFingerprint({
     merchantName: parsed.merchantName || parsed.title || '',
     normalizedDate,
-    amount: Number(parsed.amount || 0),
+    amount,
     sourceFileName,
   })
 
@@ -160,10 +163,11 @@ function buildAnalysisPayload(parsed, sourceFileName) {
     merchantName: parsed.merchantName || '',
     title: parsed.title || parsed.merchantName || 'Ticket importado',
     category: parsed.category || 'General',
-    amount: Number(parsed.amount || 0),
+    amount,
     occurredOn: normalizedDate || '',
     ticketDate: normalizedDate || '',
     notes: parsed.notes || '',
+    analysisSource: 'llm',
     items: Array.isArray(parsed.items) ? parsed.items : [],
     fingerprint,
     sourceFileName,
@@ -188,7 +192,8 @@ function buildOcrFallback(ocrText, sourceFileName, error) {
     amount,
     occurredOn: normalizedDate || '',
     ticketDate: normalizedDate || '',
-    notes: buildFallbackNotes(ocrText, error),
+    notes: '',
+    analysisSource: 'ocr_fallback',
     items: [],
     fingerprint,
     sourceFileName,
@@ -207,15 +212,126 @@ function buildFingerprint({ merchantName, normalizedDate, amount, sourceFileName
 }
 
 function extractAmount(text) {
-  const normalized = String(text || '')
-    .replace(/\./g, '')
-    .replace(/,/g, '.')
-  const matches = normalized.match(/\d+(?:\.\d{1,2})?/g) ?? []
-  const values = matches
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value) && value > 50 && value < 1000000)
+  return extractAmountCandidate(text).amount
+}
 
-  return values.length > 0 ? Math.max(...values) : 0
+function normalizeModelAmount(modelAmount, extractedAmount) {
+  const numericModelAmount = Number(modelAmount || 0)
+  if (!Number.isFinite(numericModelAmount) || numericModelAmount <= 0) {
+    return extractedAmount
+  }
+
+  if (shouldReplaceModelAmount(numericModelAmount, extractedAmount)) {
+    return extractedAmount
+  }
+
+  return Math.round(numericModelAmount)
+}
+
+function shouldReplaceModelAmount(modelAmount, extractedAmount) {
+  if (!extractedAmount || extractedAmount <= 0) {
+    return false
+  }
+
+  if (modelAmount <= 0) {
+    return true
+  }
+
+  if (modelAmount < extractedAmount / 10) {
+    return true
+  }
+
+  if (modelAmount < 100 && extractedAmount >= 1000) {
+    return true
+  }
+
+  return false
+}
+
+function extractAmountCandidate(text) {
+  const lines = String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  let best = { amount: 0, score: Number.NEGATIVE_INFINITY }
+
+  for (const [index, line] of lines.entries()) {
+    const candidates = line.match(/\d[\d., ]*\d|\d/g) ?? []
+
+    for (const candidate of candidates) {
+      const amount = parseLocalizedAmount(candidate)
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+        continue
+      }
+
+      const score = scoreAmountCandidate(line, amount, index)
+      if (score > best.score || (score === best.score && amount > best.amount)) {
+        best = { amount, score }
+      }
+    }
+  }
+
+  return { amount: best.amount > 0 ? best.amount : 0 }
+}
+
+function parseLocalizedAmount(raw) {
+  const value = String(raw || '').replace(/\s+/g, '').trim()
+  if (!value) {
+    return 0
+  }
+
+  const hasComma = value.includes(',')
+  const hasDot = value.includes('.')
+  let normalized = value
+
+  if (hasComma && hasDot) {
+    const decimalSeparator = value.lastIndexOf(',') > value.lastIndexOf('.') ? ',' : '.'
+    if (decimalSeparator === ',') {
+      normalized = value.replace(/\./g, '').replace(',', '.')
+    } else {
+      normalized = value.replace(/,/g, '')
+    }
+  } else if (hasComma) {
+    normalized = /,\d{2}$/.test(value) ? value.replace(/\./g, '').replace(',', '.') : value.replace(/,/g, '')
+  } else if (hasDot) {
+    if (/\.\d{2}$/.test(value) && (value.match(/\./g)?.length ?? 0) === 1) {
+      normalized = value
+    } else {
+      normalized = value.replace(/\./g, '')
+    }
+  }
+
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed)) {
+    return 0
+  }
+
+  return Math.round(parsed)
+}
+
+function scoreAmountCandidate(line, amount, index) {
+  const lower = String(line || '').toLowerCase()
+  let score = amount / 1000
+
+  if (/(total|importe|a pagar|total \$|total:|saldo|efectivo|tarjeta)/.test(lower)) {
+    score += 100
+  }
+
+  if (/(subtotal)/.test(lower)) {
+    score += 30
+  }
+
+  if (/(iva|descuento|recargo)/.test(lower)) {
+    score -= 20
+  }
+
+  if (/(rut|r\.u\.t|autoriz|caja|serie|factura|ticket nro|comprobante|cliente|terminal|lote)/.test(lower)) {
+    score -= 60
+  }
+
+  score += index * 0.5
+  return score
 }
 
 function inferCategory(text) {
@@ -277,13 +393,6 @@ function extractDateFromText(text) {
   }
 
   return ''
-}
-
-function buildFallbackNotes(ocrText, error) {
-  const reason =
-    error instanceof Error ? `Lectura rápida por OCR. El modelo no respondió a tiempo: ${error.message}` : 'Lectura rápida por OCR.'
-
-  return [reason, String(ocrText || '').trim().slice(0, 900)].filter(Boolean).join('\n\n')
 }
 
 function jsonResponse(statusCode, body) {

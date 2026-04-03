@@ -96,6 +96,7 @@ type TicketAnalysis = {
   occurredOn?: string
   ticketDate?: string
   notes?: string
+  analysisSource?: 'llm' | 'ocr_fallback'
   fingerprint?: string
   sourceFileName?: string
   items?: Array<{ description: string; amount?: number }>
@@ -487,7 +488,7 @@ function App() {
         amount,
         type: 'expense',
         occurredOn,
-        notes: llmAnalysis.notes ?? text.trim().slice(0, 1000),
+        notes: sanitizeTicketNotes(llmAnalysis),
         merchantName: llmAnalysis.merchantName ?? title,
         ticketDate,
         ticketFingerprint: llmAnalysis.fingerprint,
@@ -1251,6 +1252,11 @@ function App() {
                       {ticketAnalysis.ticketDate || 'fecha no detectada'} ·{' '}
                       {currency(ticketAnalysis.amount ?? 0)}
                     </p>
+                    {ticketAnalysis.analysisSource === 'ocr_fallback' ? (
+                      <p className="scenario-helper">
+                        Lectura rápida por OCR. Revisá monto y rubro antes de guardar.
+                      </p>
+                    ) : null}
                     {ticketAnalysis.items?.length ? (
                       <div className="ticket-items">
                         {ticketAnalysis.items.slice(0, 6).map((item, index) => (
@@ -1507,22 +1513,125 @@ function getErrorMessage(error: unknown) {
   return 'Ocurrió un problema inesperado.'
 }
 
-function extractAmount(text: string) {
-  const normalized = text.replace(/\./g, '').replace(/,/g, '.')
-  const matches = normalized.match(/\d+(?:\.\d{1,2})?/g) ?? []
-  const values = matches
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value) && value > 50 && value < 1000000)
-
-  return values.length > 0 ? Math.max(...values) : 0
-}
-
 function resolveTicketAmount(modelAmount: number | undefined, text: string) {
-  if (typeof modelAmount === 'number' && Number.isFinite(modelAmount) && modelAmount > 0) {
+  const extracted = extractAmountCandidate(text)
+
+  if (
+    typeof modelAmount === 'number' &&
+    Number.isFinite(modelAmount) &&
+    modelAmount > 0 &&
+    !shouldReplaceModelAmount(modelAmount, extracted.amount)
+  ) {
     return modelAmount
   }
 
-  return extractAmount(text)
+  return extracted.amount
+}
+
+function shouldReplaceModelAmount(modelAmount: number, extractedAmount: number) {
+  if (!extractedAmount || extractedAmount <= 0) {
+    return false
+  }
+
+  if (modelAmount <= 0) {
+    return true
+  }
+
+  if (modelAmount < extractedAmount / 10) {
+    return true
+  }
+
+  if (modelAmount < 100 && extractedAmount >= 1000) {
+    return true
+  }
+
+  return false
+}
+
+function extractAmountCandidate(text: string) {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  let best = { amount: 0, score: Number.NEGATIVE_INFINITY }
+
+  for (const [index, line] of lines.entries()) {
+    const candidates = line.match(/\d[\d., ]*\d|\d/g) ?? []
+
+    for (const candidate of candidates) {
+      const amount = parseLocalizedAmount(candidate)
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+        continue
+      }
+
+      const score = scoreAmountCandidate(line, amount, index)
+      if (score > best.score || (score === best.score && amount > best.amount)) {
+        best = { amount, score }
+      }
+    }
+  }
+
+  return { amount: best.amount > 0 ? best.amount : 0 }
+}
+
+function parseLocalizedAmount(raw: string) {
+  const value = raw.replace(/\s+/g, '').trim()
+  if (!value) {
+    return 0
+  }
+
+  const hasComma = value.includes(',')
+  const hasDot = value.includes('.')
+  let normalized = value
+
+  if (hasComma && hasDot) {
+    const decimalSeparator = value.lastIndexOf(',') > value.lastIndexOf('.') ? ',' : '.'
+    if (decimalSeparator === ',') {
+      normalized = value.replace(/\./g, '').replace(',', '.')
+    } else {
+      normalized = value.replace(/,/g, '')
+    }
+  } else if (hasComma) {
+    normalized = /,\d{2}$/.test(value) ? value.replace(/\./g, '').replace(',', '.') : value.replace(/,/g, '')
+  } else if (hasDot) {
+    if (/\.\d{2}$/.test(value) && (value.match(/\./g)?.length ?? 0) === 1) {
+      normalized = value
+    } else {
+      normalized = value.replace(/\./g, '')
+    }
+  }
+
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed)) {
+    return 0
+  }
+
+  return Math.round(parsed)
+}
+
+function scoreAmountCandidate(line: string, amount: number, index: number) {
+  const lower = line.toLowerCase()
+  let score = amount / 1000
+
+  if (/(total|importe|a pagar|total \$|total:|saldo|efectivo|tarjeta)/.test(lower)) {
+    score += 100
+  }
+
+  if (/(subtotal)/.test(lower)) {
+    score += 30
+  }
+
+  if (/(iva|descuento|recargo)/.test(lower)) {
+    score -= 20
+  }
+
+  if (/(rut|r\.u\.t|autoriz|caja|serie|factura|ticket nro|comprobante|cliente|terminal|lote)/.test(lower)) {
+    score -= 60
+  }
+
+  score += index * 0.5
+  return score
 }
 
 function resolveTicketCategory(modelCategory: string | undefined, text: string) {
@@ -1613,6 +1722,14 @@ function resolveTicketDate(
   }
 
   return extractTicketDate(text)
+}
+
+function sanitizeTicketNotes(ticketAnalysis: TicketAnalysis) {
+  if (ticketAnalysis.analysisSource === 'ocr_fallback') {
+    return ''
+  }
+
+  return ticketAnalysis.notes?.trim() ?? ''
 }
 
 function normalizeTicketDate(value: string | undefined) {
