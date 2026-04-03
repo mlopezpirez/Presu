@@ -68,5 +68,8 @@ Luego:
 4. Importar el repo en Netlify.
 5. Configurar `VITE_SUPABASE_URL=https://ocpsxscqdcvexwduhwbd.supabase.co`.
 6. Configurar `VITE_SUPABASE_ANON_KEY` en Netlify.
+7. Configurar `OPENAI_API_KEY` en Netlify para el análisis de tickets.
+8. Opcional: usar `OPENAI_TICKET_MODEL=gpt-5` como base o subir a `gpt-5-pro` si priorizás precisión por encima de costo y latencia.
+9. Opcional: ajustar `OPENAI_TICKET_REASONING_EFFORT=high`.
 
 `netlify.toml` ya deja configurado el build SPA.

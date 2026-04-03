@@ -5,6 +5,10 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
+const TICKET_MODEL = process.env.OPENAI_TICKET_MODEL || 'gpt-5'
+const TICKET_REASONING_EFFORT =
+  process.env.OPENAI_TICKET_REASONING_EFFORT || 'high'
+
 export default async (request) => {
   if (request.method !== 'POST') {
     return jsonResponse(405, { error: 'Method not allowed' })
@@ -34,7 +38,10 @@ export default async (request) => {
     ].join('\n')
 
     const response = await client.responses.create({
-      model: 'gpt-4.1',
+      model: TICKET_MODEL,
+      reasoning: {
+        effort: TICKET_REASONING_EFFORT,
+      },
       input: [
         {
           role: 'user',
