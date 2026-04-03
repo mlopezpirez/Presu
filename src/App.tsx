@@ -131,6 +131,7 @@ function App() {
   const [ocrPreview, setOcrPreview] = useState('')
   const [ticketAnalysis, setTicketAnalysis] = useState<TicketAnalysis | null>(null)
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateTicketMatch[]>([])
+  const [duplicateConfirmationRequired, setDuplicateConfirmationRequired] = useState(false)
   const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
 
   useEffect(() => {
@@ -304,7 +305,7 @@ function App() {
 
   async function submitAddFlow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    await persistEntry(false)
+    await persistEntry(duplicateConfirmationRequired)
   }
 
   async function submitScenario(event: FormEvent<HTMLFormElement>) {
@@ -363,6 +364,7 @@ function App() {
     setOcrPreview('')
     setTicketAnalysis(null)
     setDuplicateMatches([])
+    setDuplicateConfirmationRequired(false)
     setEditingTarget(null)
     setIsAnalyzingTicket(false)
   }
@@ -383,6 +385,7 @@ function App() {
 
       if (!ignoreDuplicates && duplicateCandidates.length > 0) {
         setDuplicateMatches(duplicateCandidates)
+        setDuplicateConfirmationRequired(true)
         setStatus('idle')
         return
       }
@@ -456,6 +459,7 @@ function App() {
     setIsAnalyzingTicket(true)
     setError(null)
     setDuplicateMatches([])
+    setDuplicateConfirmationRequired(false)
 
     try {
       const imageDataUrl = await preprocessTicketFile(file)
@@ -504,6 +508,7 @@ function App() {
   function startManualEntry() {
     setAddFlowMode('manual')
     setDuplicateMatches([])
+    setDuplicateConfirmationRequired(false)
     setTicketAnalysis(null)
     setEditingTarget(null)
   }
@@ -544,6 +549,7 @@ function App() {
     setAddFlowMode('manual')
     setIsAddModalOpen(true)
     setDuplicateMatches([])
+    setDuplicateConfirmationRequired(false)
   }
 
   function openFixedExpenseEditor(id: string) {
@@ -573,6 +579,7 @@ function App() {
     setAddFlowMode('manual')
     setIsAddModalOpen(true)
     setDuplicateMatches([])
+    setDuplicateConfirmationRequired(false)
   }
 
   function toggleFixedExpenseInScenario(expense: FixedExpense) {
@@ -1466,7 +1473,7 @@ function App() {
                   <button className="secondary-button" type="button" onClick={closeAddModal}>
                     Cancelar
                   </button>
-                  {duplicateMatches.length > 0 ? (
+                  {duplicateMatches.length > 0 && !duplicateConfirmationRequired ? (
                     <button
                       className="secondary-button warning-button"
                       type="button"
@@ -1475,8 +1482,20 @@ function App() {
                       Guardar igual
                     </button>
                   ) : null}
-                  <button className="primary-button" type="submit" disabled={status !== 'idle' || isAnalyzingTicket}>
-                    <Plus size={16} /> {editingTarget ? 'Actualizar' : 'Guardar'}
+                  <button
+                    className={`primary-button ${duplicateConfirmationRequired ? 'warning-button' : ''}`}
+                    type="button"
+                    disabled={status !== 'idle' || isAnalyzingTicket}
+                    onClick={() =>
+                      void persistEntry(duplicateConfirmationRequired)
+                    }
+                  >
+                    <Plus size={16} />{' '}
+                    {duplicateConfirmationRequired
+                      ? 'Confirmar y guardar igual'
+                      : editingTarget
+                        ? 'Actualizar'
+                        : 'Guardar'}
                   </button>
                 </div>
               </form>
