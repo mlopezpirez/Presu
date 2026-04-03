@@ -199,7 +199,8 @@ button {
 .content-grid,
 .scenario-grid,
 .scenario-columns,
-.scenario-preview {
+.scenario-preview,
+.entry-grid {
   display: grid;
   gap: 18px;
 }
@@ -306,6 +307,18 @@ button {
 
 .bottom-grid {
   grid-template-columns: 1.15fr 0.85fr;
+}
+
+.entry-grid {
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 16px;
+}
+
+.entry-card {
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(122, 103, 72, 0.12);
 }
 
 .chart-wrap {
@@ -550,7 +563,8 @@ textarea:focus {
   .content-grid,
   .bottom-grid,
   .scenario-columns,
-  .scenario-preview {
+  .scenario-preview,
+  .entry-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -581,7 +595,8 @@ textarea:focus {
   .bottom-grid,
   .form-row,
   .scenario-columns,
-  .scenario-preview {
+  .scenario-preview,
+  .entry-grid {
     grid-template-columns: 1fr;
   }
 

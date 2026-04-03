@@ -38,11 +38,20 @@ import type {
   TransactionDraft,
 } from './types'
 
-const initialTransaction: TransactionDraft = {
+const initialExpense: TransactionDraft = {
   title: '',
   category: 'General',
   amount: 0,
   type: 'expense',
+  occurredOn: todayLocalIso(),
+  notes: '',
+}
+
+const initialIncome: TransactionDraft = {
+  title: '',
+  category: 'Ingreso',
+  amount: 0,
+  type: 'income',
   occurredOn: todayLocalIso(),
   notes: '',
 }
@@ -68,7 +77,8 @@ function App() {
   const [snapshot, setSnapshot] = useState<FinanceSnapshot | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving'>('loading')
   const [error, setError] = useState<string | null>(null)
-  const [transaction, setTransaction] = useState<TransactionDraft>(initialTransaction)
+  const [expense, setExpense] = useState<TransactionDraft>(initialExpense)
+  const [income, setIncome] = useState<TransactionDraft>(initialIncome)
   const [fixedExpense, setFixedExpense] = useState<FixedExpenseDraft>(initialFixedExpense)
   const [scenario, setScenario] = useState<ScenarioDraft>(initialScenario)
   const [activeView, setActiveView] = useState<'dashboard' | 'scenarios'>('dashboard')
@@ -239,17 +249,14 @@ function App() {
     }
   }, [scenario, scenarioBasePeriod, snapshot, metrics])
 
-  async function saveIncome(event: FormEvent<HTMLFormElement>) {
+  async function submitExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const formData = new FormData(event.currentTarget)
-    const monthlyIncome = Number(formData.get('monthlyIncome') ?? 0)
-    const savingsGoal = Number(formData.get('savingsGoal') ?? 0)
-
     setStatus('saving')
     setError(null)
 
     try {
-      await financeStore.upsertSettings({ monthlyIncome, savingsGoal })
+      await financeStore.addTransaction({ ...expense, type: 'expense' })
+      setExpense(initialExpense)
       await loadSnapshot()
     } catch (saveError) {
       setError(getErrorMessage(saveError))
@@ -257,14 +264,14 @@ function App() {
     }
   }
 
-  async function submitTransaction(event: FormEvent<HTMLFormElement>) {
+  async function submitIncome(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setStatus('saving')
     setError(null)
 
     try {
-      await financeStore.addTransaction(transaction)
-      setTransaction(initialTransaction)
+      await financeStore.addTransaction({ ...income, type: 'income' })
+      setIncome(initialIncome)
       await loadSnapshot()
     } catch (saveError) {
       setError(getErrorMessage(saveError))
@@ -601,94 +608,153 @@ function App() {
               <div className="panel-heading">
                 <div>
                   <p className="section-kicker">Movimientos</p>
-                  <h2>Registrar y revisar detalle</h2>
+                  <h2>Registrar gastos e ingresos por separado</h2>
                 </div>
                 <p className="muted">{visibleTransactions.length} movimientos visibles</p>
               </div>
-              <form className="stack-form" onSubmit={submitTransaction}>
-                <label>
-                  Descripción
-                  <input
-                    value={transaction.title}
-                    onChange={(event) =>
-                      setTransaction((current) => ({ ...current, title: event.target.value }))
-                    }
-                    required
-                  />
-                </label>
-                <div className="form-row">
+              <div className="entry-grid">
+                <form className="stack-form entry-card" onSubmit={submitExpense}>
+                  <p className="section-kicker">Nuevo gasto</p>
                   <label>
-                    Tipo
-                    <select
-                      value={transaction.type}
-                      onChange={(event) =>
-                        setTransaction((current) => ({
-                          ...current,
-                          type: event.target.value as TransactionDraft['type'],
-                        }))
-                      }
-                    >
-                      <option value="expense">Gasto</option>
-                      <option value="income">Ingreso</option>
-                    </select>
-                  </label>
-                  <label>
-                    Rubro
+                    Descripción
                     <input
-                      value={transaction.category}
+                      value={expense.title}
                       onChange={(event) =>
-                        setTransaction((current) => ({ ...current, category: event.target.value }))
+                        setExpense((current) => ({ ...current, title: event.target.value }))
                       }
                       required
                     />
                   </label>
-                </div>
-                <div className="form-row">
+                  <div className="form-row">
+                    <label>
+                      Rubro único
+                      <input
+                        value={expense.category}
+                        onChange={(event) =>
+                          setExpense((current) => ({ ...current, category: event.target.value }))
+                        }
+                        required
+                      />
+                    </label>
+                    <label>
+                      Monto
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={expense.amount}
+                        onChange={(event) =>
+                          setExpense((current) => ({
+                            ...current,
+                            amount: Number(event.target.value),
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+                  </div>
+                  <div className="form-row">
+                    <label>
+                      Fecha
+                      <input
+                        type="date"
+                        value={expense.occurredOn}
+                        onChange={(event) =>
+                          setExpense((current) => ({
+                            ...current,
+                            occurredOn: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+                    <label>
+                      Detalle o ticket
+                      <input
+                        value={expense.notes}
+                        onChange={(event) =>
+                          setExpense((current) => ({ ...current, notes: event.target.value }))
+                        }
+                        placeholder="Ticket, aclaración, comercio..."
+                      />
+                    </label>
+                  </div>
+                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
+                    <Plus size={16} /> Agregar gasto
+                  </button>
+                </form>
+
+                <form className="stack-form entry-card" onSubmit={submitIncome}>
+                  <p className="section-kicker">Nuevo ingreso</p>
                   <label>
-                    Monto
+                    Descripción
                     <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={transaction.amount}
+                      value={income.title}
                       onChange={(event) =>
-                        setTransaction((current) => ({
-                          ...current,
-                          amount: Number(event.target.value),
-                        }))
+                        setIncome((current) => ({ ...current, title: event.target.value }))
                       }
                       required
                     />
                   </label>
-                  <label>
-                    Fecha
-                    <input
-                      type="date"
-                      value={transaction.occurredOn}
-                      onChange={(event) =>
-                        setTransaction((current) => ({
-                          ...current,
-                          occurredOn: event.target.value,
-                        }))
-                      }
-                      required
-                    />
-                  </label>
-                </div>
-                <label>
-                  Notas o detalle de ticket
-                  <textarea
-                    rows={3}
-                    value={transaction.notes}
-                    onChange={(event) =>
-                      setTransaction((current) => ({ ...current, notes: event.target.value }))
-                    }
-                  />
-                </label>
-                <button className="primary-button" type="submit" disabled={status !== 'idle'}>
-                  <Plus size={16} /> Agregar movimiento
-                </button>
-              </form>
+                  <div className="form-row">
+                    <label>
+                      Rubro único
+                      <input
+                        value={income.category}
+                        onChange={(event) =>
+                          setIncome((current) => ({ ...current, category: event.target.value }))
+                        }
+                        required
+                      />
+                    </label>
+                    <label>
+                      Monto
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={income.amount}
+                        onChange={(event) =>
+                          setIncome((current) => ({
+                            ...current,
+                            amount: Number(event.target.value),
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+                  </div>
+                  <div className="form-row">
+                    <label>
+                      Fecha
+                      <input
+                        type="date"
+                        value={income.occurredOn}
+                        onChange={(event) =>
+                          setIncome((current) => ({
+                            ...current,
+                            occurredOn: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+                    <label>
+                      Detalle
+                      <input
+                        value={income.notes}
+                        onChange={(event) =>
+                          setIncome((current) => ({ ...current, notes: event.target.value }))
+                        }
+                        placeholder="Sueldo, freelance, reintegro..."
+                      />
+                    </label>
+                  </div>
+                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
+                    <Plus size={16} /> Agregar ingreso
+                  </button>
+                </form>
+              </div>
 
               <div className="list-block">
                 {visibleTransactions.map((item) => (
@@ -715,42 +781,6 @@ function App() {
             </div>
 
             <div className="panel right-stack">
-              <section className="subpanel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-kicker">Presupuesto base</p>
-                    <h2>Ingreso y ahorro objetivo</h2>
-                  </div>
-                </div>
-                <form className="stack-form" onSubmit={saveIncome}>
-                  <label>
-                    Ingreso mensual base
-                    <input
-                      name="monthlyIncome"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      defaultValue={snapshot.settings.monthlyIncome}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Meta de ahorro
-                    <input
-                      name="savingsGoal"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      defaultValue={snapshot.settings.savingsGoal}
-                      required
-                    />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={status !== 'idle'}>
-                    Guardar configuración
-                  </button>
-                </form>
-              </section>
-
               <section className="subpanel">
                 <div className="panel-heading">
                   <div>
