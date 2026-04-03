@@ -96,7 +96,7 @@ type TicketAnalysis = {
   occurredOn?: string
   ticketDate?: string
   notes?: string
-  analysisSource?: 'llm' | 'ocr_fallback'
+  analysisSource?: 'llm' | 'ocr_fallback' | 'local_fast'
   fingerprint?: string
   sourceFileName?: string
   items?: Array<{ description: string; amount?: number }>
@@ -468,36 +468,28 @@ function App() {
       })
       const text = result.data.text
       setOcrPreview(text.trim())
-      const llmAnalysis = await analyzeTicketWithLlm(imageDataUrl, text, file.name)
-      const amount = resolveTicketAmount(llmAnalysis.amount, text)
-      const category = resolveTicketCategory(llmAnalysis.category, text)
-      const title = resolveTicketTitle(llmAnalysis.title, llmAnalysis.merchantName, text)
-      const ticketDate = resolveTicketDate(llmAnalysis.ticketDate, llmAnalysis.occurredOn, text)
-      const occurredOn = ticketDate || todayLocalIso()
-      setTicketAnalysis({
-        ...llmAnalysis,
-        title,
-        category,
-        amount,
-        occurredOn,
-        ticketDate,
-        merchantName: llmAnalysis.merchantName?.trim() || title,
-      })
+      const localAnalysis = buildLocalTicketAnalysis(text, file.name)
+      const finalAnalysis = shouldUseLocalTicketAnalysis(localAnalysis)
+        ? localAnalysis
+        : await analyzeTicketWithLlm(imageDataUrl, text, file.name)
 
-      setManualType('expense')
-      setExpenseKind('variable')
-      setExpense({
+      const amount = resolveTicketAmount(finalAnalysis.amount, text)
+      const category = resolveTicketCategory(finalAnalysis.category, text)
+      const title = resolveTicketTitle(finalAnalysis.title, finalAnalysis.merchantName, text)
+      const ticketDate = resolveTicketDate(finalAnalysis.ticketDate, finalAnalysis.occurredOn, text)
+      const occurredOn = ticketDate || todayLocalIso()
+      const normalizedAnalysis = {
+        ...finalAnalysis,
         title,
         category,
         amount,
-        type: 'expense',
         occurredOn,
-        notes: sanitizeTicketNotes(llmAnalysis),
-        merchantName: llmAnalysis.merchantName ?? title,
         ticketDate,
-        ticketFingerprint: llmAnalysis.fingerprint,
-        sourceFileName: file.name,
-      })
+        merchantName: finalAnalysis.merchantName?.trim() || title,
+      }
+
+      setTicketAnalysis(normalizedAnalysis)
+      applyTicketAnalysisToExpense(normalizedAnalysis, file.name)
     } catch (analyzeError) {
       setError(getErrorMessage(analyzeError))
     } finally {
@@ -511,6 +503,25 @@ function App() {
     setDuplicateConfirmationRequired(false)
     setTicketAnalysis(null)
     setEditingTarget(null)
+  }
+
+  function applyTicketAnalysisToExpense(analysis: TicketAnalysis, fileName: string) {
+    const title = analysis.title ?? 'Ticket importado'
+
+    setManualType('expense')
+    setExpenseKind('variable')
+    setExpense({
+      title,
+      category: analysis.category ?? 'General',
+      amount: analysis.amount ?? 0,
+      type: 'expense',
+      occurredOn: analysis.occurredOn || todayLocalIso(),
+      notes: sanitizeTicketNotes(analysis),
+      merchantName: analysis.merchantName ?? title,
+      ticketDate: analysis.ticketDate,
+      ticketFingerprint: analysis.fingerprint,
+      sourceFileName: fileName,
+    })
   }
 
   function openTransactionEditor(id: string) {
@@ -1264,6 +1275,11 @@ function App() {
                         Lectura rápida por OCR. Revisá monto y rubro antes de guardar.
                       </p>
                     ) : null}
+                    {ticketAnalysis.analysisSource === 'local_fast' ? (
+                      <p className="scenario-helper">
+                        Lectura local sin IA. Solo se usa el modelo si faltan datos clave.
+                      </p>
+                    ) : null}
                     {ticketAnalysis.items?.length ? (
                       <div className="ticket-items">
                         {ticketAnalysis.items.slice(0, 6).map((item, index) => (
@@ -1545,6 +1561,34 @@ function resolveTicketAmount(modelAmount: number | undefined, text: string) {
   }
 
   return extracted.isReliable ? extracted.amount : 0
+}
+
+function buildLocalTicketAnalysis(text: string, sourceFileName: string): TicketAnalysis {
+  const amountCandidate = extractAmountCandidate(text)
+  const title = inferTitle(text)
+  const ticketDate = extractTicketDate(text)
+  const category = inferCategory(text)
+
+  return {
+    merchantName: title,
+    title,
+    category,
+    amount: amountCandidate.isReliable ? amountCandidate.amount : 0,
+    occurredOn: ticketDate || '',
+    ticketDate,
+    notes: '',
+    analysisSource: 'local_fast',
+    sourceFileName,
+    items: [],
+  }
+}
+
+function shouldUseLocalTicketAnalysis(analysis: TicketAnalysis) {
+  const hasAmount = typeof analysis.amount === 'number' && analysis.amount > 0
+  const hasDate = Boolean(analysis.ticketDate)
+  const hasMerchant = Boolean(analysis.merchantName && analysis.merchantName.length >= 4)
+
+  return hasAmount && hasDate && hasMerchant
 }
 
 function shouldReplaceModelAmount(
