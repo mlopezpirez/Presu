@@ -69,8 +69,8 @@ Luego:
 5. Configurar `VITE_SUPABASE_URL=https://ocpsxscqdcvexwduhwbd.supabase.co`.
 6. Configurar `VITE_SUPABASE_ANON_KEY` en Netlify.
 7. Configurar `OPENAI_API_KEY` en Netlify para el análisis de tickets.
-8. Opcional: usar `OPENAI_TICKET_MODEL=gpt-5-mini` como base para tickets y subir a `gpt-5` o `gpt-5-pro` si priorizás precisión por encima de costo y latencia.
+8. Opcional: usar `OPENAI_TICKET_MODEL=gpt-5` como base para tickets y subir a `gpt-5-pro` si priorizás precisión por encima de costo y latencia.
 9. Opcional: ajustar `OPENAI_TICKET_REASONING_EFFORT=medium`.
-10. Opcional: ajustar `OPENAI_TICKET_IMAGE_DETAIL=low` y `OPENAI_TICKET_TIMEOUT_MS=6500` para evitar timeouts en Netlify.
+10. Opcional: ajustar `OPENAI_TICKET_IMAGE_DETAIL=high` y `OPENAI_TICKET_TIMEOUT_MS=14000` para priorizar precisión.
 
 `netlify.toml` ya deja configurado el build SPA.

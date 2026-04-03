@@ -1520,16 +1520,19 @@ function resolveTicketAmount(modelAmount: number | undefined, text: string) {
     typeof modelAmount === 'number' &&
     Number.isFinite(modelAmount) &&
     modelAmount > 0 &&
-    !shouldReplaceModelAmount(modelAmount, extracted.amount)
+    !shouldReplaceModelAmount(modelAmount, extracted)
   ) {
-    return modelAmount
+    return Math.round(modelAmount)
   }
 
-  return extracted.amount
+  return extracted.isReliable ? extracted.amount : 0
 }
 
-function shouldReplaceModelAmount(modelAmount: number, extractedAmount: number) {
-  if (!extractedAmount || extractedAmount <= 0) {
+function shouldReplaceModelAmount(
+  modelAmount: number,
+  extracted: { amount: number; isReliable: boolean },
+) {
+  if (!extracted.isReliable || !extracted.amount || extracted.amount <= 0) {
     return false
   }
 
@@ -1537,11 +1540,11 @@ function shouldReplaceModelAmount(modelAmount: number, extractedAmount: number) 
     return true
   }
 
-  if (modelAmount < extractedAmount / 10) {
+  if (modelAmount < extracted.amount / 10) {
     return true
   }
 
-  if (modelAmount < 100 && extractedAmount >= 1000) {
+  if (modelAmount < 100 && extracted.amount >= 1000) {
     return true
   }
 
@@ -1554,7 +1557,7 @@ function extractAmountCandidate(text: string) {
     .map((line) => line.trim())
     .filter(Boolean)
 
-  let best = { amount: 0, score: Number.NEGATIVE_INFINITY }
+  let best = { amount: 0, score: Number.NEGATIVE_INFINITY, line: '' }
 
   for (const [index, line] of lines.entries()) {
     const candidates = line.match(/\d[\d., ]*\d|\d/g) ?? []
@@ -1567,12 +1570,20 @@ function extractAmountCandidate(text: string) {
 
       const score = scoreAmountCandidate(line, amount, index)
       if (score > best.score || (score === best.score && amount > best.amount)) {
-        best = { amount, score }
+        best = { amount, score, line }
       }
     }
   }
 
-  return { amount: best.amount > 0 ? best.amount : 0 }
+  const hasTotalSignal = /(total|importe|a pagar|saldo|total \$|total:|total uyu|total pagado)/.test(
+    best.line.toLowerCase(),
+  )
+  const isReliable = best.amount > 0 && (hasTotalSignal || best.score >= 80)
+
+  return {
+    amount: best.amount > 0 ? best.amount : 0,
+    isReliable,
+  }
 }
 
 function parseLocalizedAmount(raw: string) {
@@ -1623,6 +1634,14 @@ function scoreAmountCandidate(line: string, amount: number, index: number) {
   }
 
   if (/(iva|descuento|recargo)/.test(lower)) {
+    score -= 20
+  }
+
+  if (/\bx\b|\d+\s*x\s*\d+/.test(lower)) {
+    score -= 45
+  }
+
+  if (/^\d+\//.test(lower)) {
     score -= 20
   }
 

@@ -5,11 +5,11 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const TICKET_MODEL = process.env.OPENAI_TICKET_MODEL || 'gpt-5-mini'
+const TICKET_MODEL = process.env.OPENAI_TICKET_MODEL || 'gpt-5'
 const TICKET_REASONING_EFFORT =
   process.env.OPENAI_TICKET_REASONING_EFFORT || 'medium'
-const TICKET_IMAGE_DETAIL = process.env.OPENAI_TICKET_IMAGE_DETAIL || 'low'
-const TICKET_TIMEOUT_MS = Number(process.env.OPENAI_TICKET_TIMEOUT_MS || 6500)
+const TICKET_IMAGE_DETAIL = process.env.OPENAI_TICKET_IMAGE_DETAIL || 'high'
+const TICKET_TIMEOUT_MS = Number(process.env.OPENAI_TICKET_TIMEOUT_MS || 14000)
 
 export default async (request) => {
   if (request.method !== 'POST') {
@@ -34,10 +34,11 @@ export default async (request) => {
       '- category debe ser un solo rubro breve y consistente.',
       '- notes debe resumir el contexto útil del ticket.',
       '- items debe contener líneas de compra útiles si se distinguen, ignorando números de serie.',
+      '- Si no estás seguro del total final, devuelve amount en 0.',
       '- No inventes valores.',
       '',
       'Texto OCR preliminar:',
-      ocrText || '(sin OCR)',
+      compactOcrText(ocrText),
     ].join('\n')
 
     const analysis = await analyzeTicketFast({
@@ -150,7 +151,7 @@ async function analyzeTicketFast({ imageDataUrl, ocrText, prompt, sourceFileName
 
 function buildAnalysisPayload(parsed, sourceFileName, ocrText) {
   const normalizedDate = normalizeDate(parsed.ticketDate || parsed.occurredOn)
-  const extractedAmount = extractAmount(ocrText)
+  const extractedAmount = extractAmountCandidate(ocrText)
   const amount = normalizeModelAmount(parsed.amount, extractedAmount)
   const fingerprint = buildFingerprint({
     merchantName: parsed.merchantName || parsed.title || '',
@@ -177,7 +178,8 @@ function buildAnalysisPayload(parsed, sourceFileName, ocrText) {
 function buildOcrFallback(ocrText, sourceFileName, error) {
   const normalizedDate = extractDateFromText(ocrText)
   const merchantName = inferTitle(ocrText)
-  const amount = extractAmount(ocrText)
+  const extractedAmount = extractAmountCandidate(ocrText)
+  const amount = extractedAmount.isReliable ? extractedAmount.amount : 0
   const fingerprint = buildFingerprint({
     merchantName,
     normalizedDate,
@@ -215,21 +217,21 @@ function extractAmount(text) {
   return extractAmountCandidate(text).amount
 }
 
-function normalizeModelAmount(modelAmount, extractedAmount) {
+function normalizeModelAmount(modelAmount, extracted) {
   const numericModelAmount = Number(modelAmount || 0)
   if (!Number.isFinite(numericModelAmount) || numericModelAmount <= 0) {
-    return extractedAmount
+    return extracted.isReliable ? extracted.amount : 0
   }
 
-  if (shouldReplaceModelAmount(numericModelAmount, extractedAmount)) {
-    return extractedAmount
+  if (shouldReplaceModelAmount(numericModelAmount, extracted)) {
+    return extracted.amount
   }
 
   return Math.round(numericModelAmount)
 }
 
-function shouldReplaceModelAmount(modelAmount, extractedAmount) {
-  if (!extractedAmount || extractedAmount <= 0) {
+function shouldReplaceModelAmount(modelAmount, extracted) {
+  if (!extracted.isReliable || !extracted.amount || extracted.amount <= 0) {
     return false
   }
 
@@ -237,11 +239,11 @@ function shouldReplaceModelAmount(modelAmount, extractedAmount) {
     return true
   }
 
-  if (modelAmount < extractedAmount / 10) {
+  if (modelAmount < extracted.amount / 10) {
     return true
   }
 
-  if (modelAmount < 100 && extractedAmount >= 1000) {
+  if (modelAmount < 100 && extracted.amount >= 1000) {
     return true
   }
 
@@ -254,7 +256,7 @@ function extractAmountCandidate(text) {
     .map((line) => line.trim())
     .filter(Boolean)
 
-  let best = { amount: 0, score: Number.NEGATIVE_INFINITY }
+  let best = { amount: 0, score: Number.NEGATIVE_INFINITY, line: '' }
 
   for (const [index, line] of lines.entries()) {
     const candidates = line.match(/\d[\d., ]*\d|\d/g) ?? []
@@ -267,12 +269,20 @@ function extractAmountCandidate(text) {
 
       const score = scoreAmountCandidate(line, amount, index)
       if (score > best.score || (score === best.score && amount > best.amount)) {
-        best = { amount, score }
+        best = { amount, score, line }
       }
     }
   }
 
-  return { amount: best.amount > 0 ? best.amount : 0 }
+  const hasTotalSignal = /(total|importe|a pagar|saldo|total \$|total:|total uyu|total pagado)/.test(
+    best.line.toLowerCase(),
+  )
+  const isReliable = best.amount > 0 && (hasTotalSignal || best.score >= 80)
+
+  return {
+    amount: best.amount > 0 ? best.amount : 0,
+    isReliable,
+  }
 }
 
 function parseLocalizedAmount(raw) {
@@ -326,12 +336,31 @@ function scoreAmountCandidate(line, amount, index) {
     score -= 20
   }
 
+  if (/\bx\b|\d+\s*x\s*\d+/.test(lower)) {
+    score -= 45
+  }
+
+  if (/^\d+\//.test(lower)) {
+    score -= 20
+  }
+
   if (/(rut|r\.u\.t|autoriz|caja|serie|factura|ticket nro|comprobante|cliente|terminal|lote)/.test(lower)) {
     score -= 60
   }
 
   score += index * 0.5
   return score
+}
+
+function compactOcrText(text) {
+  const lines = String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line.length > 1)
+    .slice(0, 80)
+
+  return lines.join('\n') || '(sin OCR)'
 }
 
 function inferCategory(text) {
