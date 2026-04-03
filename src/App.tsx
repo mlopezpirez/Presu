@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import Tesseract from 'tesseract.js'
+import * as pdfjsLib from 'pdfjs-dist'
 import {
   AlertCircle,
   AlertTriangle,
@@ -44,6 +45,8 @@ import type {
   ScenarioDraft,
   TransactionDraft,
 } from './types'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
 
 const initialExpense: TransactionDraft = {
   title: '',
@@ -454,7 +457,7 @@ function App() {
     setDuplicateMatches([])
 
     try {
-      const imageDataUrl = await preprocessTicketImage(file)
+      const imageDataUrl = await preprocessTicketFile(file)
       const result = await Tesseract.recognize(imageDataUrl, 'spa+eng', {
         logger: () => undefined,
       })
@@ -1197,11 +1200,28 @@ function App() {
                   />
                   <Camera size={24} />
                   <strong>Sacar foto o subir ticket</strong>
-                  <span>La web analiza el texto y te propone rubro, monto y detalle.</span>
+                  <span>Abre la cámara del celu y analiza la foto del ticket.</span>
+                </label>
+
+                <label className="upload-card">
+                  <input
+                    className="hidden-input"
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) {
+                        void analyzeTicket(file)
+                      }
+                    }}
+                  />
+                  <FileImage size={24} />
+                  <strong>Subir JPG, PNG o PDF</strong>
+                  <span>Elegís un archivo ya guardado sin abrir la cámara.</span>
                 </label>
 
                 <button className="upload-card button-card" type="button" onClick={startManualEntry}>
-                  <FileImage size={24} />
+                  <CirclePlus size={24} />
                   <strong>Agregar manualmente</strong>
                   <span>Elegís si es ingreso o gasto y después si ese gasto es fijo o variable.</span>
                 </button>
@@ -1527,6 +1547,14 @@ function inferTitle(text: string) {
   return firstMeaningfulLine?.slice(0, 80) ?? 'Ticket importado'
 }
 
+async function preprocessTicketFile(file: File) {
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+    return renderPdfFirstPage(file)
+  }
+
+  return preprocessTicketImage(file)
+}
+
 async function preprocessTicketImage(file: File) {
   const imageBitmap = await createImageBitmap(file)
   const scale = Math.min(2200 / imageBitmap.width, 2200 / imageBitmap.height, 1.8)
@@ -1554,6 +1582,30 @@ async function preprocessTicketImage(file: File) {
   }
 
   context.putImageData(imageData, 0, 0)
+  return canvas.toDataURL('image/jpeg', 0.92)
+}
+
+async function renderPdfFirstPage(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise
+  const page = await pdf.getPage(1)
+  const viewport = page.getViewport({ scale: 2 })
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+
+  if (!context) {
+    throw new Error('No se pudo renderizar el PDF del ticket.')
+  }
+
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+
+  await page.render({
+    canvas,
+    canvasContext: context,
+    viewport,
+  }).promise
+
   return canvas.toDataURL('image/jpeg', 0.92)
 }
 
