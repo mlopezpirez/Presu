@@ -8,11 +8,14 @@ import type {
   FixedExpense,
   FixedExpenseDraft,
   ScenarioDraft,
+  ScenarioExpenseChange,
   Transaction,
   TransactionDraft,
 } from '../types'
 
-type DemoScenarioRecord = ScenarioDraft & { id: string; createdAt: string }
+type DemoScenarioRecord = Omit<BudgetScenario, 'projectedIncome' | 'projectedExpenses' | 'projectedBalance' | 'hitsSavingsGoal'> & {
+  expenseChanges: ScenarioExpenseChange[]
+}
 
 type DemoStore = {
   settings: FinanceSettings
@@ -82,15 +85,38 @@ function buildChartPoints(transactions: Transaction[]) {
   }))
 }
 
+function getAvailablePeriods(transactions: Transaction[]) {
+  return [...new Set(transactions.map((item) => item.occurredOn.slice(0, 7)))].sort().reverse()
+}
+
 function computeScenario(
   item: DemoScenarioRecord,
   settings: FinanceSettings,
   variableExpenses: number,
-  fixedExpensesTotal: number,
+  fixedExpenses: FixedExpense[],
 ): BudgetScenario {
+  const removedFixedTotal = item.expenseChanges
+    .filter((change) => change.changeType === 'remove_fixed')
+    .reduce((sum, change) => sum + change.amount, 0)
+
+  const addedFixedTotal = item.expenseChanges
+    .filter((change) => change.changeType === 'add_fixed')
+    .reduce((sum, change) => sum + change.amount, 0)
+
+  const addedVariableTotal = item.expenseChanges
+    .filter((change) => change.changeType === 'add_variable')
+    .reduce((sum, change) => sum + change.amount, 0)
+
+  const activeFixedTotal = fixedExpenses.reduce((sum, expense) => sum + expense.amount, 0)
   const projectedIncome = settings.monthlyIncome + item.incomeDelta
   const projectedExpenses =
-    variableExpenses + fixedExpensesTotal + item.extraExpenseDelta + item.fixedExpenseDelta
+    variableExpenses +
+    activeFixedTotal -
+    removedFixedTotal +
+    addedFixedTotal +
+    addedVariableTotal +
+    item.extraExpenseDelta +
+    item.fixedExpenseDelta
   const projectedBalance = projectedIncome - projectedExpenses
 
   return {
@@ -102,8 +128,7 @@ function computeScenario(
   }
 }
 
-async function getDemoSnapshot(): Promise<FinanceSnapshot> {
-  const data = readDemoStore()
+function buildSnapshot(data: DemoStore, sourceLabel: string, source: FinanceSnapshot['summary']['dataSource']): FinanceSnapshot {
   const totalVariableExpenses = data.transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
@@ -114,17 +139,22 @@ async function getDemoSnapshot(): Promise<FinanceSnapshot> {
     transactions: sortByDate(data.transactions),
     fixedExpenses: sortByDate(data.fixedExpenses),
     scenarios: data.scenarios.map((item) =>
-      computeScenario(item, data.settings, totalVariableExpenses, totalFixedExpenses),
+      computeScenario(item, data.settings, totalVariableExpenses, data.fixedExpenses),
     ),
+    availablePeriods: getAvailablePeriods(data.transactions),
     summary: {
       totalVariableExpenses,
       totalFixedExpenses,
       monthlyIncome: data.settings.monthlyIncome,
       chartPoints: buildChartPoints(data.transactions),
-      dataSource: 'demo',
-      dataSourceLabel: 'Modo demo con base marzo',
+      dataSource: source,
+      dataSourceLabel: sourceLabel,
     },
   }
+}
+
+async function getDemoSnapshot(): Promise<FinanceSnapshot> {
+  return buildSnapshot(readDemoStore(), 'Modo demo con base marzo', 'demo')
 }
 
 async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
@@ -137,15 +167,17 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     { data: transactionsData, error: transactionsError },
     { data: fixedExpensesData, error: fixedExpensesError },
     { data: scenariosData, error: scenariosError },
+    { data: scenarioChangesData, error: scenarioChangesError },
   ] = await Promise.all([
     supabase.from('finance_settings').select('*').limit(1).maybeSingle(),
     supabase.from('transactions').select('*').order('occurred_on', { ascending: false }),
-    supabase.from('fixed_expenses').select('*').order('created_at', { ascending: false }),
+    supabase.from('fixed_expenses').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     supabase.from('budget_scenarios').select('*').order('created_at', { ascending: false }),
+    supabase.from('budget_scenario_expense_changes').select('*').order('created_at', { ascending: true }),
   ])
 
   const firstError =
-    settingsError ?? transactionsError ?? fixedExpensesError ?? scenariosError
+    settingsError ?? transactionsError ?? fixedExpensesError ?? scenariosError ?? scenarioChangesError
   if (firstError) {
     throw new Error(firstError.message)
   }
@@ -158,7 +190,7 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
   const transactions: Transaction[] = (transactionsData ?? []).map((item) => ({
     id: item.id,
     title: item.title,
-    category: item.category_name ?? item.category ?? 'Sin categoría',
+    category: item.category_name ?? 'Sin categoría',
     amount: Number(item.amount),
     type: item.type,
     occurredOn: item.occurred_on,
@@ -170,16 +202,30 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     id: item.id,
     name: item.name,
     amount: Number(item.amount),
-    category: item.category_name ?? item.category ?? 'Sin categoría',
+    category: item.category_name ?? 'Sin categoría',
     dueDay: item.due_day,
     ownerLabel: item.owner_label ?? '',
     createdAt: item.created_at,
   }))
 
+  const scenarioChangesById = new Map<string, ScenarioExpenseChange[]>()
+
+  for (const item of scenarioChangesData ?? []) {
+    const current = scenarioChangesById.get(item.scenario_id) ?? []
+    current.push({
+      id: item.id,
+      changeType: item.change_type,
+      fixedExpenseId: item.fixed_expense_id ?? undefined,
+      label: item.label,
+      category: item.category_name,
+      amount: Number(item.amount),
+    })
+    scenarioChangesById.set(item.scenario_id, current)
+  }
+
   const totalVariableExpenses = transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
-  const totalFixedExpenses = fixedExpenses.reduce((sum, item) => sum + item.amount, 0)
 
   const scenarios: BudgetScenario[] = (scenariosData ?? []).map((item) =>
     computeScenario(
@@ -190,11 +236,12 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
         extraExpenseDelta: Number(item.extra_expense_delta),
         fixedExpenseDelta: Number(item.fixed_expense_delta),
         notes: item.notes ?? '',
+        expenseChanges: scenarioChangesById.get(item.id) ?? [],
         createdAt: item.created_at,
       },
       settings,
       totalVariableExpenses,
-      totalFixedExpenses,
+      fixedExpenses,
     ),
   )
 
@@ -203,9 +250,10 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     transactions,
     fixedExpenses,
     scenarios,
+    availablePeriods: getAvailablePeriods(transactions),
     summary: {
       totalVariableExpenses,
-      totalFixedExpenses,
+      totalFixedExpenses: fixedExpenses.reduce((sum, item) => sum + item.amount, 0),
       monthlyIncome: settings.monthlyIncome,
       chartPoints: buildChartPoints(transactions),
       dataSource: 'supabase',
@@ -242,8 +290,16 @@ async function addDemoFixedExpense(draft: FixedExpenseDraft) {
 async function addDemoScenario(draft: ScenarioDraft) {
   const data = readDemoStore()
   data.scenarios.unshift({
-    ...draft,
     id: crypto.randomUUID(),
+    name: draft.name,
+    incomeDelta: draft.incomeDelta,
+    extraExpenseDelta: draft.extraExpenseDelta,
+    fixedExpenseDelta: draft.fixedExpenseDelta,
+    notes: draft.notes,
+    expenseChanges: draft.expenseChanges.map((change) => ({
+      ...change,
+      id: crypto.randomUUID(),
+    })),
     createdAt: new Date().toISOString(),
   })
   writeDemoStore(data)
@@ -297,7 +353,7 @@ async function addSupabaseTransaction(draft: TransactionDraft) {
     amount: draft.amount,
     type: draft.type,
     occurred_on: draft.occurredOn,
-    period_month: draft.occurredOn.slice(0, 7) + '-01',
+    period_month: `${draft.occurredOn.slice(0, 7)}-01`,
     source_type: 'manual',
     notes: draft.notes,
   })
@@ -330,13 +386,36 @@ async function addSupabaseScenario(draft: ScenarioDraft) {
     return
   }
 
-  const { error } = await supabase.from('budget_scenarios').insert({
-    name: draft.name,
-    income_delta: draft.incomeDelta,
-    extra_expense_delta: draft.extraExpenseDelta,
-    fixed_expense_delta: draft.fixedExpenseDelta,
-    notes: draft.notes,
-  })
+  const { data: scenarioData, error: scenarioError } = await supabase
+    .from('budget_scenarios')
+    .insert({
+      name: draft.name,
+      income_delta: draft.incomeDelta,
+      extra_expense_delta: draft.extraExpenseDelta,
+      fixed_expense_delta: draft.fixedExpenseDelta,
+      notes: draft.notes,
+    })
+    .select('id')
+    .single()
+
+  if (scenarioError) {
+    throw new Error(scenarioError.message)
+  }
+
+  if (draft.expenseChanges.length === 0) {
+    return
+  }
+
+  const { error } = await supabase.from('budget_scenario_expense_changes').insert(
+    draft.expenseChanges.map((change) => ({
+      scenario_id: scenarioData.id,
+      change_type: change.changeType,
+      fixed_expense_id: change.fixedExpenseId ?? null,
+      label: change.label,
+      category_name: change.category,
+      amount: change.amount,
+    })),
+  )
 
   if (error) {
     throw new Error(error.message)

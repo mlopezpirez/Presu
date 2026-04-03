@@ -25,6 +25,15 @@ export type FixedExpense = {
 
 export type FixedExpenseDraft = Omit<FixedExpense, 'id' | 'createdAt'>
 
+export type ScenarioExpenseChange = {
+  id: string
+  changeType: 'remove_fixed' | 'add_fixed' | 'add_variable'
+  fixedExpenseId?: string
+  label: string
+  category: string
+  amount: number
+}
+
 export type BudgetScenario = {
   id: string
   name: string
@@ -32,6 +41,7 @@ export type BudgetScenario = {
   extraExpenseDelta: number
   fixedExpenseDelta: number
   notes: string
+  expenseChanges: ScenarioExpenseChange[]
   projectedIncome: number
   projectedExpenses: number
   projectedBalance: number
@@ -39,15 +49,22 @@ export type BudgetScenario = {
   createdAt: string
 }
 
-export type ScenarioDraft = Omit<
+export type ScenarioDraft = ScenarioDraftBase & {
+  expenseChanges: Omit<ScenarioExpenseChange, 'id'>[]
+}
+
+type ScenarioDraftBase = Omit<
   BudgetScenario,
   | 'id'
   | 'createdAt'
+  | 'expenseChanges'
   | 'projectedIncome'
   | 'projectedExpenses'
   | 'projectedBalance'
   | 'hitsSavingsGoal'
 >
+
+export type PeriodMode = 'month' | 'all'
 
 export type FinanceSettings = {
   monthlyIncome: number
@@ -65,6 +82,7 @@ export type FinanceSnapshot = {
   transactions: Transaction[]
   fixedExpenses: FixedExpense[]
   scenarios: BudgetScenario[]
+  availablePeriods: string[]
   summary: {
     totalVariableExpenses: number
     totalFixedExpenses: number
