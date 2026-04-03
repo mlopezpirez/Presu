@@ -107,17 +107,22 @@ function App() {
     }
   }
 
-  const visibleTransactions = useMemo(() => {
+  const periodTransactions = useMemo(() => {
     if (!snapshot) {
       return []
     }
 
-    const base =
-      periodMode === 'all'
-        ? snapshot.transactions
-        : snapshot.transactions.filter((item) => item.occurredOn.startsWith(selectedPeriod))
+    return periodMode === 'all'
+      ? snapshot.transactions
+      : snapshot.transactions.filter((item) => item.occurredOn.startsWith(selectedPeriod))
+  }, [periodMode, selectedPeriod, snapshot])
 
-    return base.filter((item) => {
+  const visibleTransactions = useMemo(() => {
+    return periodTransactions.filter((item) => {
+      if (item.type === 'income') {
+        return true
+      }
+
       const matchesCategory =
         categoryFilter === 'all' ? true : item.category === categoryFilter
       const haystack = `${item.title} ${item.notes}`.toLowerCase()
@@ -127,7 +132,7 @@ function App() {
 
       return matchesCategory && matchesSearch
     })
-  }, [categoryFilter, periodMode, searchFilter, selectedPeriod, snapshot])
+  }, [categoryFilter, periodTransactions, searchFilter])
 
   const metrics = useMemo(() => {
     if (!snapshot) {
@@ -135,7 +140,7 @@ function App() {
     }
 
     const monthsCount = periodMode === 'all' ? Math.max(snapshot.availablePeriods.length, 1) : 1
-    const visibleIncome = visibleTransactions
+    const visibleIncome = periodTransactions
       .filter((item) => item.type === 'income')
       .reduce((sum, item) => sum + item.amount, 0)
     const visibleVariableExpenses = visibleTransactions
@@ -156,7 +161,7 @@ function App() {
       balance,
       coverage,
     }
-  }, [periodMode, snapshot, visibleTransactions])
+  }, [periodMode, periodTransactions, snapshot, visibleTransactions])
 
   const expenseCategories = useMemo(() => {
     if (!snapshot) {
