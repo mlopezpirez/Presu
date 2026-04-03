@@ -464,11 +464,20 @@ function App() {
       const text = result.data.text
       setOcrPreview(text.trim())
       const llmAnalysis = await analyzeTicketWithLlm(imageDataUrl, text, file.name)
-      const amount = llmAnalysis.amount ?? extractAmount(text)
-      const category = llmAnalysis.category ?? inferCategory(text)
-      const title = llmAnalysis.title ?? inferTitle(text)
-      const occurredOn = llmAnalysis.occurredOn ?? todayLocalIso()
-      setTicketAnalysis(llmAnalysis)
+      const amount = resolveTicketAmount(llmAnalysis.amount, text)
+      const category = resolveTicketCategory(llmAnalysis.category, text)
+      const title = resolveTicketTitle(llmAnalysis.title, llmAnalysis.merchantName, text)
+      const ticketDate = resolveTicketDate(llmAnalysis.ticketDate, llmAnalysis.occurredOn, text)
+      const occurredOn = ticketDate || todayLocalIso()
+      setTicketAnalysis({
+        ...llmAnalysis,
+        title,
+        category,
+        amount,
+        occurredOn,
+        ticketDate,
+        merchantName: llmAnalysis.merchantName?.trim() || title,
+      })
 
       setManualType('expense')
       setExpenseKind('variable')
@@ -480,7 +489,7 @@ function App() {
         occurredOn,
         notes: llmAnalysis.notes ?? text.trim().slice(0, 1000),
         merchantName: llmAnalysis.merchantName ?? title,
-        ticketDate: llmAnalysis.ticketDate,
+        ticketDate,
         ticketFingerprint: llmAnalysis.fingerprint,
         sourceFileName: file.name,
       })
@@ -1508,6 +1517,29 @@ function extractAmount(text: string) {
   return values.length > 0 ? Math.max(...values) : 0
 }
 
+function resolveTicketAmount(modelAmount: number | undefined, text: string) {
+  if (typeof modelAmount === 'number' && Number.isFinite(modelAmount) && modelAmount > 0) {
+    return modelAmount
+  }
+
+  return extractAmount(text)
+}
+
+function resolveTicketCategory(modelCategory: string | undefined, text: string) {
+  const normalizedModelCategory = modelCategory?.trim()
+  const inferredCategory = inferCategory(text)
+
+  if (!normalizedModelCategory) {
+    return inferredCategory
+  }
+
+  if (normalizedModelCategory.toLowerCase() === 'general' && inferredCategory !== 'General') {
+    return inferredCategory
+  }
+
+  return normalizedModelCategory
+}
+
 function inferCategory(text: string) {
   const lower = text.toLowerCase()
 
@@ -1545,6 +1577,82 @@ function inferTitle(text: string) {
     .find((line) => line.length > 3 && !/^\d+$/.test(line))
 
   return firstMeaningfulLine?.slice(0, 80) ?? 'Ticket importado'
+}
+
+function resolveTicketTitle(
+  modelTitle: string | undefined,
+  merchantName: string | undefined,
+  text: string,
+) {
+  const normalizedTitle = modelTitle?.trim()
+  if (normalizedTitle) {
+    return normalizedTitle
+  }
+
+  const normalizedMerchant = merchantName?.trim()
+  if (normalizedMerchant) {
+    return normalizedMerchant
+  }
+
+  return inferTitle(text)
+}
+
+function resolveTicketDate(
+  modelTicketDate: string | undefined,
+  modelOccurredOn: string | undefined,
+  text: string,
+) {
+  const normalizedModelTicketDate = normalizeTicketDate(modelTicketDate)
+  if (normalizedModelTicketDate) {
+    return normalizedModelTicketDate
+  }
+
+  const normalizedModelOccurredOn = normalizeTicketDate(modelOccurredOn)
+  if (normalizedModelOccurredOn) {
+    return normalizedModelOccurredOn
+  }
+
+  return extractTicketDate(text)
+}
+
+function normalizeTicketDate(value: string | undefined) {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return ''
+  }
+
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (isoMatch) {
+    return trimmed
+  }
+
+  const latinMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
+  if (!latinMatch) {
+    return ''
+  }
+
+  const day = latinMatch[1].padStart(2, '0')
+  const month = latinMatch[2].padStart(2, '0')
+  const year = latinMatch[3].length === 2 ? `20${latinMatch[3]}` : latinMatch[3]
+  return `${year}-${month}-${day}`
+}
+
+function extractTicketDate(text: string) {
+  const candidates = [...text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/g)]
+
+  for (const candidate of candidates) {
+    const day = Number(candidate[1])
+    const month = Number(candidate[2])
+    const year = Number(candidate[3].length === 2 ? `20${candidate[3]}` : candidate[3])
+
+    if (day < 1 || day > 31 || month < 1 || month > 12 || year < 2020 || year > 2100) {
+      continue
+    }
+
+    return `${String(year)}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  }
+
+  return ''
 }
 
 async function preprocessTicketFile(file: File) {
