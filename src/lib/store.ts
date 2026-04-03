@@ -506,11 +506,16 @@ async function findSupabaseDuplicateTransactions(
   }
 
   if (draft.ticketFingerprint) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('transactions')
       .select('id,title,amount,occurred_on,merchant_name')
       .eq('ticket_fingerprint', draft.ticketFingerprint)
-      .neq('id', excludeId ?? '')
+
+    if (excludeId) {
+      query = query.neq('id', excludeId)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       throw new Error(error.message)
