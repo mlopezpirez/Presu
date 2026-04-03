@@ -8,6 +8,10 @@ export type Transaction = {
   type: 'expense' | 'income'
   occurredOn: string
   notes: string
+  merchantName?: string
+  ticketDate?: string
+  ticketFingerprint?: string
+  sourceFileName?: string
   createdAt: string
 }
 
@@ -91,4 +95,12 @@ export type FinanceSnapshot = {
     dataSource: DataSource
     dataSourceLabel: string
   }
+}
+
+export type DuplicateTicketMatch = {
+  id: string
+  title: string
+  amount: number
+  occurredOn: string
+  merchantName?: string
 }

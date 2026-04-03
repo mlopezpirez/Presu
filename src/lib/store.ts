@@ -3,6 +3,7 @@ import { monthLabel } from './format'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type {
   BudgetScenario,
+  DuplicateTicketMatch,
   FinanceSettings,
   FinanceSnapshot,
   FixedExpense,
@@ -195,6 +196,10 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     type: item.type,
     occurredOn: item.occurred_on,
     notes: item.notes ?? '',
+    merchantName: item.merchant_name ?? '',
+    ticketDate: item.ticket_date ?? undefined,
+    ticketFingerprint: item.ticket_fingerprint ?? undefined,
+    sourceFileName: item.source_file_name ?? undefined,
     createdAt: item.created_at,
   }))
 
@@ -356,11 +361,167 @@ async function addSupabaseTransaction(draft: TransactionDraft) {
     period_month: `${draft.occurredOn.slice(0, 7)}-01`,
     source_type: 'manual',
     notes: draft.notes,
+    merchant_name: draft.merchantName ?? '',
+    ticket_date: draft.ticketDate ?? null,
+    ticket_fingerprint: draft.ticketFingerprint ?? null,
+    source_file_name: draft.sourceFileName ?? null,
   })
 
   if (error) {
     throw new Error(error.message)
   }
+}
+
+async function updateDemoTransaction(id: string, draft: TransactionDraft) {
+  const data = readDemoStore()
+  data.transactions = data.transactions.map((item) =>
+    item.id === id ? { ...item, ...draft } : item,
+  )
+  writeDemoStore(data)
+}
+
+async function updateDemoFixedExpense(id: string, draft: FixedExpenseDraft) {
+  const data = readDemoStore()
+  data.fixedExpenses = data.fixedExpenses.map((item) =>
+    item.id === id ? { ...item, ...draft } : item,
+  )
+  writeDemoStore(data)
+}
+
+async function updateSupabaseTransaction(id: string, draft: TransactionDraft) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase
+    .from('transactions')
+    .update({
+      title: draft.title,
+      category_name: draft.category,
+      amount: draft.amount,
+      type: draft.type,
+      occurred_on: draft.occurredOn,
+      period_month: `${draft.occurredOn.slice(0, 7)}-01`,
+      notes: draft.notes,
+      merchant_name: draft.merchantName ?? '',
+      ticket_date: draft.ticketDate ?? null,
+      ticket_fingerprint: draft.ticketFingerprint ?? null,
+      source_file_name: draft.sourceFileName ?? null,
+    })
+    .eq('id', id)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft) {
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase
+    .from('fixed_expenses')
+    .update({
+      name: draft.name,
+      category_name: draft.category,
+      owner_label: draft.ownerLabel,
+      amount: draft.amount,
+      due_day: draft.dueDay,
+    })
+    .eq('id', id)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+function mapDuplicateMatches(rows: Array<Record<string, unknown>>): DuplicateTicketMatch[] {
+  return rows.map((item) => ({
+    id: String(item.id),
+    title: String(item.title),
+    amount: Number(item.amount),
+    occurredOn: String(item.occurred_on),
+    merchantName: typeof item.merchant_name === 'string' ? item.merchant_name : '',
+  }))
+}
+
+async function findDemoDuplicateTransactions(
+  draft: TransactionDraft,
+  excludeId?: string,
+): Promise<DuplicateTicketMatch[]> {
+  const data = readDemoStore()
+  return data.transactions
+    .filter((item) => item.type === 'expense')
+    .filter((item) => (excludeId ? item.id !== excludeId : true))
+    .filter((item) => {
+      if (draft.ticketFingerprint && item.ticketFingerprint) {
+        return item.ticketFingerprint === draft.ticketFingerprint
+      }
+
+      const sameAmount = item.amount === draft.amount
+      const sameDate = item.occurredOn === draft.occurredOn
+      const sameMerchant =
+        draft.merchantName && item.merchantName
+          ? item.merchantName.toLowerCase() === draft.merchantName.toLowerCase()
+          : item.title.toLowerCase() === draft.title.toLowerCase()
+
+      return sameAmount && sameDate && sameMerchant
+    })
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      amount: item.amount,
+      occurredOn: item.occurredOn,
+      merchantName: item.merchantName,
+    }))
+}
+
+async function findSupabaseDuplicateTransactions(
+  draft: TransactionDraft,
+  excludeId?: string,
+): Promise<DuplicateTicketMatch[]> {
+  if (!supabase || draft.type !== 'expense') {
+    return []
+  }
+
+  if (draft.ticketFingerprint) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id,title,amount,occurred_on,merchant_name')
+      .eq('ticket_fingerprint', draft.ticketFingerprint)
+      .neq('id', excludeId ?? '')
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return mapDuplicateMatches(data ?? [])
+  }
+
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('id,title,amount,occurred_on,merchant_name')
+    .eq('type', 'expense')
+    .eq('amount', draft.amount)
+    .eq('occurred_on', draft.occurredOn)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return mapDuplicateMatches((data ?? []).filter((item) => {
+    if (excludeId && String(item.id) === excludeId) {
+      return false
+    }
+
+    const merchant = typeof item.merchant_name === 'string' ? item.merchant_name : ''
+    if (draft.merchantName && merchant) {
+      return merchant.toLowerCase() === draft.merchantName.toLowerCase()
+    }
+
+    return String(item.title).toLowerCase() === draft.title.toLowerCase()
+  }))
 }
 
 async function addSupabaseFixedExpense(draft: FixedExpenseDraft) {
@@ -455,8 +616,23 @@ export const financeStore = {
       ? addSupabaseFixedExpense(draft)
       : addDemoFixedExpense(draft)
   },
+  async updateTransaction(id: string, draft: TransactionDraft) {
+    return isSupabaseConfigured
+      ? updateSupabaseTransaction(id, draft)
+      : updateDemoTransaction(id, draft)
+  },
+  async updateFixedExpense(id: string, draft: FixedExpenseDraft) {
+    return isSupabaseConfigured
+      ? updateSupabaseFixedExpense(id, draft)
+      : updateDemoFixedExpense(id, draft)
+  },
   async addScenario(draft: ScenarioDraft) {
     return isSupabaseConfigured ? addSupabaseScenario(draft) : addDemoScenario(draft)
+  },
+  async findDuplicateTransactions(draft: TransactionDraft, excludeId?: string) {
+    return isSupabaseConfigured
+      ? findSupabaseDuplicateTransactions(draft, excludeId)
+      : findDemoDuplicateTransactions(draft, excludeId)
   },
   async deleteTransaction(id: string) {
     return isSupabaseConfigured

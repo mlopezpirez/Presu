@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import Tesseract from 'tesseract.js'
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRightLeft,
   BadgeDollarSign,
   CalendarRange,
@@ -13,6 +14,7 @@ import {
   Landmark,
   LayoutDashboard,
   PiggyBank,
+  Pencil,
   Plus,
   Scale,
   Search,
@@ -34,6 +36,7 @@ import {
 import { currency, monthLabel, todayLocalIso } from './lib/format'
 import { financeStore } from './lib/store'
 import type {
+  DuplicateTicketMatch,
   FinanceSnapshot,
   FixedExpense,
   FixedExpenseDraft,
@@ -78,6 +81,22 @@ const initialScenario: ScenarioDraft = {
 }
 
 type AddFlowMode = 'menu' | 'manual' | 'ticket'
+type EditingTarget =
+  | { kind: 'transaction'; id: string }
+  | { kind: 'fixedExpense'; id: string }
+  | null
+type TicketAnalysis = {
+  merchantName?: string
+  title?: string
+  category?: string
+  amount?: number
+  occurredOn?: string
+  ticketDate?: string
+  notes?: string
+  fingerprint?: string
+  sourceFileName?: string
+  items?: Array<{ description: string; amount?: number }>
+}
 
 function App() {
   const [snapshot, setSnapshot] = useState<FinanceSnapshot | null>(null)
@@ -106,6 +125,9 @@ function App() {
   const [isAnalyzingTicket, setIsAnalyzingTicket] = useState(false)
   const [ticketImageName, setTicketImageName] = useState('')
   const [ocrPreview, setOcrPreview] = useState('')
+  const [ticketAnalysis, setTicketAnalysis] = useState<TicketAnalysis | null>(null)
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateTicketMatch[]>([])
+  const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
 
   useEffect(() => {
     void loadSnapshot()
@@ -276,73 +298,9 @@ function App() {
     }
   }, [scenario, scenarioBasePeriod, snapshot, metrics])
 
-  async function submitExpense(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setStatus('saving')
-    setError(null)
-
-    try {
-      await financeStore.addTransaction({ ...expense, type: 'expense' })
-      setExpense(initialExpense)
-      await loadSnapshot()
-    } catch (saveError) {
-      setError(getErrorMessage(saveError))
-      setStatus('idle')
-    }
-  }
-
-  async function submitIncome(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setStatus('saving')
-    setError(null)
-
-    try {
-      await financeStore.addTransaction({ ...income, type: 'income' })
-      setIncome(initialIncome)
-      await loadSnapshot()
-    } catch (saveError) {
-      setError(getErrorMessage(saveError))
-      setStatus('idle')
-    }
-  }
-
   async function submitAddFlow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-
-    if (manualType === 'income') {
-      await submitIncome(event)
-      closeAddModal()
-      return
-    }
-
-    if (expenseKind === 'fixed') {
-      await submitFixedFromDraft()
-      closeAddModal()
-      return
-    }
-
-    await submitExpense(event)
-    closeAddModal()
-  }
-
-  async function submitFixedFromDraft() {
-    setStatus('saving')
-    setError(null)
-
-    try {
-      await financeStore.addFixedExpense({
-        ...fixedExpense,
-        name: expense.title,
-        amount: expense.amount,
-        category: expense.category,
-      })
-      setExpense(initialExpense)
-      setFixedExpense(initialFixedExpense)
-      await loadSnapshot()
-    } catch (saveError) {
-      setError(getErrorMessage(saveError))
-      setStatus('idle')
-    }
+    await persistEntry(false)
   }
 
   async function submitScenario(event: FormEvent<HTMLFormElement>) {
@@ -399,7 +357,93 @@ function App() {
     setFixedExpense(initialFixedExpense)
     setTicketImageName('')
     setOcrPreview('')
+    setTicketAnalysis(null)
+    setDuplicateMatches([])
+    setEditingTarget(null)
     setIsAnalyzingTicket(false)
+  }
+
+  async function persistEntry(ignoreDuplicates: boolean) {
+    setStatus('saving')
+    setError(null)
+
+    try {
+      const currentDraft = manualType === 'income' ? income : expense
+      const duplicateCandidates =
+        manualType === 'expense' && expenseKind === 'variable'
+          ? await financeStore.findDuplicateTransactions(
+              currentDraft,
+              editingTarget?.kind === 'transaction' ? editingTarget.id : undefined,
+            )
+          : []
+
+      if (!ignoreDuplicates && duplicateCandidates.length > 0) {
+        setDuplicateMatches(duplicateCandidates)
+        setStatus('idle')
+        return
+      }
+
+      if (editingTarget?.kind === 'transaction') {
+        await saveFromTransactionEdit(currentDraft)
+      } else if (editingTarget?.kind === 'fixedExpense') {
+        await saveFromFixedExpenseEdit(currentDraft)
+      } else if (manualType === 'income') {
+        await financeStore.addTransaction({ ...income, type: 'income' })
+      } else if (expenseKind === 'fixed') {
+        await financeStore.addFixedExpense({
+          ...fixedExpense,
+          name: expense.title,
+          amount: expense.amount,
+          category: expense.category,
+        })
+      } else {
+        await financeStore.addTransaction({ ...expense, type: 'expense' })
+      }
+
+      await loadSnapshot()
+      closeAddModal()
+    } catch (saveError) {
+      setError(getErrorMessage(saveError))
+      setStatus('idle')
+    }
+  }
+
+  async function saveFromTransactionEdit(currentDraft: TransactionDraft) {
+    if (!editingTarget || editingTarget.kind !== 'transaction') {
+      return
+    }
+
+    if (manualType === 'income' || expenseKind === 'variable') {
+      await financeStore.updateTransaction(editingTarget.id, currentDraft)
+      return
+    }
+
+    await financeStore.addFixedExpense({
+      ...fixedExpense,
+      name: expense.title,
+      amount: expense.amount,
+      category: expense.category,
+    })
+    await financeStore.deleteTransaction(editingTarget.id)
+  }
+
+  async function saveFromFixedExpenseEdit(currentDraft: TransactionDraft) {
+    if (!editingTarget || editingTarget.kind !== 'fixedExpense') {
+      return
+    }
+
+    if (manualType === 'expense' && expenseKind === 'fixed') {
+      await financeStore.updateFixedExpense(editingTarget.id, {
+        ...fixedExpense,
+        name: expense.title,
+        amount: expense.amount,
+        category: expense.category,
+      })
+      return
+    }
+
+    await financeStore.addTransaction(currentDraft)
+    await financeStore.deleteFixedExpense(editingTarget.id)
   }
 
   async function analyzeTicket(file: File) {
@@ -407,15 +451,21 @@ function App() {
     setTicketImageName(file.name)
     setIsAnalyzingTicket(true)
     setError(null)
+    setDuplicateMatches([])
 
     try {
-      const result = await Tesseract.recognize(file, 'spa+eng')
+      const imageDataUrl = await preprocessTicketImage(file)
+      const result = await Tesseract.recognize(imageDataUrl, 'spa+eng', {
+        logger: () => undefined,
+      })
       const text = result.data.text
       setOcrPreview(text.trim())
-
-      const amount = extractAmount(text)
-      const category = inferCategory(text)
-      const title = inferTitle(text)
+      const llmAnalysis = await analyzeTicketWithLlm(imageDataUrl, text, file.name)
+      const amount = llmAnalysis.amount ?? extractAmount(text)
+      const category = llmAnalysis.category ?? inferCategory(text)
+      const title = llmAnalysis.title ?? inferTitle(text)
+      const occurredOn = llmAnalysis.occurredOn ?? todayLocalIso()
+      setTicketAnalysis(llmAnalysis)
 
       setManualType('expense')
       setExpenseKind('variable')
@@ -424,14 +474,92 @@ function App() {
         category,
         amount,
         type: 'expense',
-        occurredOn: todayLocalIso(),
-        notes: text.trim().slice(0, 1000),
+        occurredOn,
+        notes: llmAnalysis.notes ?? text.trim().slice(0, 1000),
+        merchantName: llmAnalysis.merchantName ?? title,
+        ticketDate: llmAnalysis.ticketDate,
+        ticketFingerprint: llmAnalysis.fingerprint,
+        sourceFileName: file.name,
       })
     } catch (analyzeError) {
       setError(getErrorMessage(analyzeError))
     } finally {
       setIsAnalyzingTicket(false)
     }
+  }
+
+  function startManualEntry() {
+    setAddFlowMode('manual')
+    setDuplicateMatches([])
+    setTicketAnalysis(null)
+    setEditingTarget(null)
+  }
+
+  function openTransactionEditor(id: string) {
+    const target = snapshot?.transactions.find((item) => item.id === id)
+    if (!target) {
+      return
+    }
+
+    setEditingTarget({ kind: 'transaction', id })
+    setManualType(target.type)
+    setExpenseKind('variable')
+    setExpense({
+      title: target.title,
+      category: target.category,
+      amount: target.amount,
+      type: target.type,
+      occurredOn: target.occurredOn,
+      notes: target.notes,
+      merchantName: target.merchantName,
+      ticketDate: target.ticketDate,
+      ticketFingerprint: target.ticketFingerprint,
+      sourceFileName: target.sourceFileName,
+    })
+    setIncome({
+      title: target.title,
+      category: target.category,
+      amount: target.amount,
+      type: target.type,
+      occurredOn: target.occurredOn,
+      notes: target.notes,
+      merchantName: target.merchantName,
+      ticketDate: target.ticketDate,
+      ticketFingerprint: target.ticketFingerprint,
+      sourceFileName: target.sourceFileName,
+    })
+    setAddFlowMode('manual')
+    setIsAddModalOpen(true)
+    setDuplicateMatches([])
+  }
+
+  function openFixedExpenseEditor(id: string) {
+    const target = snapshot?.fixedExpenses.find((item) => item.id === id)
+    if (!target) {
+      return
+    }
+
+    setEditingTarget({ kind: 'fixedExpense', id })
+    setManualType('expense')
+    setExpenseKind('fixed')
+    setExpense({
+      title: target.name,
+      category: target.category,
+      amount: target.amount,
+      type: 'expense',
+      occurredOn: todayLocalIso(),
+      notes: '',
+    })
+    setFixedExpense({
+      name: target.name,
+      category: target.category,
+      amount: target.amount,
+      dueDay: target.dueDay,
+      ownerLabel: target.ownerLabel,
+    })
+    setAddFlowMode('manual')
+    setIsAddModalOpen(true)
+    setDuplicateMatches([])
   }
 
   function toggleFixedExpenseInScenario(expense: FixedExpense) {
@@ -729,6 +857,9 @@ function App() {
                         {item.type === 'income' ? '+' : '-'}
                         {currency(item.amount)}
                       </span>
+                      <button className="ghost-button" type="button" onClick={() => openTransactionEditor(item.id)}>
+                        <Pencil size={16} />
+                      </button>
                       <button className="ghost-button" type="button" onClick={() => void removeTransaction(item.id)}>
                         <Trash2 size={16} />
                       </button>
@@ -758,6 +889,9 @@ function App() {
                       </div>
                       <div className="item-actions">
                         <span className="pill neutral">{currency(item.amount)}</span>
+                        <button className="ghost-button" type="button" onClick={() => openFixedExpenseEditor(item.id)}>
+                          <Pencil size={16} />
+                        </button>
                         <button className="ghost-button" type="button" onClick={() => void removeFixedExpense(item.id)}>
                           <Trash2 size={16} />
                         </button>
@@ -1066,7 +1200,7 @@ function App() {
                   <span>La web analiza el texto y te propone rubro, monto y detalle.</span>
                 </label>
 
-                <button className="upload-card button-card" type="button" onClick={() => setAddFlowMode('manual')}>
+                <button className="upload-card button-card" type="button" onClick={startManualEntry}>
                   <FileImage size={24} />
                   <strong>Agregar manualmente</strong>
                   <span>Elegís si es ingreso o gasto y después si ese gasto es fijo o variable.</span>
@@ -1078,6 +1212,43 @@ function App() {
               <form className="stack-form" onSubmit={submitAddFlow}>
                 {isAnalyzingTicket ? <p className="scenario-helper">Analizando ticket...</p> : null}
                 {ticketImageName ? <p className="scenario-helper">Archivo: {ticketImageName}</p> : null}
+
+                {ticketAnalysis ? (
+                  <div className="ticket-summary">
+                    <p className="section-kicker">Lectura sugerida</p>
+                    <strong>{ticketAnalysis.title || 'Ticket analizado'}</strong>
+                    <p>
+                      {ticketAnalysis.merchantName || 'Comercio sin detectar'} ·{' '}
+                      {ticketAnalysis.ticketDate || 'fecha no detectada'} ·{' '}
+                      {currency(ticketAnalysis.amount ?? 0)}
+                    </p>
+                    {ticketAnalysis.items?.length ? (
+                      <div className="ticket-items">
+                        {ticketAnalysis.items.slice(0, 6).map((item, index) => (
+                          <span className="badge small-badge" key={`${item.description}-${index}`}>
+                            {item.description}
+                            {item.amount ? ` · ${currency(item.amount)}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {duplicateMatches.length > 0 ? (
+                  <section className="alert duplicate-alert">
+                    <AlertTriangle size={18} />
+                    <div>
+                      <strong>Este ticket parece ya cargado.</strong>
+                      {duplicateMatches.map((match) => (
+                        <p key={match.id}>
+                          {match.title} · {currency(match.amount)} · {monthLabel(match.occurredOn)}
+                          {match.merchantName ? ` · ${match.merchantName}` : ''}
+                        </p>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
 
                 <div className="form-row">
                   <label>
@@ -1260,8 +1431,17 @@ function App() {
                   <button className="secondary-button" type="button" onClick={closeAddModal}>
                     Cancelar
                   </button>
+                  {duplicateMatches.length > 0 ? (
+                    <button
+                      className="secondary-button warning-button"
+                      type="button"
+                      onClick={() => void persistEntry(true)}
+                    >
+                      Guardar igual
+                    </button>
+                  ) : null}
                   <button className="primary-button" type="submit" disabled={status !== 'idle' || isAnalyzingTicket}>
-                    <Plus size={16} /> Guardar
+                    <Plus size={16} /> {editingTarget ? 'Actualizar' : 'Guardar'}
                   </button>
                 </div>
               </form>
@@ -1345,6 +1525,60 @@ function inferTitle(text: string) {
     .find((line) => line.length > 3 && !/^\d+$/.test(line))
 
   return firstMeaningfulLine?.slice(0, 80) ?? 'Ticket importado'
+}
+
+async function preprocessTicketImage(file: File) {
+  const imageBitmap = await createImageBitmap(file)
+  const scale = Math.min(2200 / imageBitmap.width, 2200 / imageBitmap.height, 1.8)
+  const width = Math.max(1, Math.round(imageBitmap.width * scale))
+  const height = Math.max(1, Math.round(imageBitmap.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+
+  if (!context) {
+    throw new Error('No se pudo preparar la imagen del ticket.')
+  }
+
+  context.drawImage(imageBitmap, 0, 0, width, height)
+  const imageData = context.getImageData(0, 0, width, height)
+  const data = imageData.data
+
+  for (let index = 0; index < data.length; index += 4) {
+    const avg = (data[index] + data[index + 1] + data[index + 2]) / 3
+    const boosted = avg > 185 ? 255 : avg < 110 ? 0 : avg
+    data[index] = boosted
+    data[index + 1] = boosted
+    data[index + 2] = boosted
+  }
+
+  context.putImageData(imageData, 0, 0)
+  return canvas.toDataURL('image/jpeg', 0.92)
+}
+
+async function analyzeTicketWithLlm(
+  imageDataUrl: string,
+  ocrText: string,
+  sourceFileName: string,
+): Promise<TicketAnalysis> {
+  const response = await fetch('/.netlify/functions/analyze-ticket', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      imageDataUrl,
+      ocrText,
+      sourceFileName,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error('No se pudo analizar el ticket con el modelo.')
+  }
+
+  return (await response.json()) as TicketAnalysis
 }
 
 export default App
