@@ -782,7 +782,8 @@ async function addSupabaseScenario(draft: ScenarioDraft) {
     draft.expenseChanges.map((change) => ({
       scenario_id: scenarioData.id,
       change_type: change.changeType,
-      fixed_expense_id: change.fixedExpenseId ?? null,
+      fixed_expense_id:
+        change.changeType === 'remove_fixed' ? change.fixedExpenseId ?? null : null,
       label: change.label,
       category_name: change.category,
       amount: change.amount,

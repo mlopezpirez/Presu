@@ -670,20 +670,30 @@ function App() {
   function toggleVariableExpenseInScenario(
     expense: Pick<Transaction, 'id' | 'title' | 'category' | 'amount'>,
   ) {
-    const variableKey = `variable:${expense.id}`
     const exists = scenario.expenseChanges.some(
-      (item) => item.changeType === 'remove_variable' && item.fixedExpenseId === variableKey,
+      (item) =>
+        item.changeType === 'remove_variable' &&
+        item.label === expense.title &&
+        item.category === expense.category &&
+        item.amount === expense.amount,
     )
 
     setScenario((current) => ({
       ...current,
       expenseChanges: exists
-        ? current.expenseChanges.filter((item) => item.fixedExpenseId !== variableKey)
+        ? current.expenseChanges.filter(
+            (item) =>
+              !(
+                item.changeType === 'remove_variable' &&
+                item.label === expense.title &&
+                item.category === expense.category &&
+                item.amount === expense.amount
+              ),
+          )
         : [
             ...current.expenseChanges,
             {
               changeType: 'remove_variable',
-              fixedExpenseId: variableKey,
               label: expense.title,
               category: expense.category,
               amount: expense.amount,
@@ -1140,7 +1150,9 @@ function App() {
                         const checked = scenario.expenseChanges.some(
                           (item) =>
                             item.changeType === 'remove_variable' &&
-                            item.fixedExpenseId === `variable:${expense.id}`,
+                            item.label === expense.title &&
+                            item.category === expense.category &&
+                            item.amount === expense.amount,
                         )
 
                         return (
