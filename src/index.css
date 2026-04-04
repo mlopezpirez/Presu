@@ -630,6 +630,19 @@ textarea:focus {
   border: 1px solid rgba(122, 103, 72, 0.14);
 }
 
+.clickable-card {
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.clickable-card:hover,
+.clickable-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px rgba(67, 46, 22, 0.12);
+  border-color: rgba(15, 118, 110, 0.28);
+  outline: none;
+}
+
 .scenario-top {
   display: flex;
   justify-content: space-between;
@@ -654,6 +667,10 @@ textarea:focus {
 
 .scenario-card dt {
   font-weight: 600;
+}
+
+.detail-preview {
+  margin-bottom: 18px;
 }
 
 @media (max-width: 1160px) {

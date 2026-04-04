@@ -136,6 +136,7 @@ function App() {
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateTicketMatch[]>([])
   const [duplicateConfirmationRequired, setDuplicateConfirmationRequired] = useState(false)
   const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
+  const [selectedScenario, setSelectedScenario] = useState<FinanceSnapshot['scenarios'][number] | null>(null)
 
   useEffect(() => {
     void loadSnapshot()
@@ -1290,13 +1291,32 @@ function App() {
             </div>
             <div className="scenario-grid">
               {snapshot.scenarios.map((item) => (
-                <article className="scenario-card" key={item.id}>
+                <article
+                  className="scenario-card clickable-card"
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedScenario(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setSelectedScenario(item)
+                    }
+                  }}
+                >
                   <div className="scenario-top">
                     <div>
                       <h3>{item.name}</h3>
                       <p>{item.notes || 'Sin notas adicionales.'}</p>
                     </div>
-                    <button className="ghost-button" type="button" onClick={() => void removeScenario(item.id)}>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void removeScenario(item.id)
+                      }}
+                    >
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -1330,6 +1350,91 @@ function App() {
           </section>
         </section>
       )}
+
+      {selectedScenario ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="panel-heading">
+              <div>
+                <p className="section-kicker">Escenario</p>
+                <h2>{selectedScenario.name}</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setSelectedScenario(null)}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            <div className="scenario-preview detail-preview">
+              <MetricCard
+                icon={<TrendingUp size={18} />}
+                label="Ingreso proyectado"
+                value={currency(selectedScenario.projectedIncome)}
+                tone="emerald"
+              />
+              <MetricCard
+                icon={<Filter size={18} />}
+                label="Gasto proyectado"
+                value={currency(selectedScenario.projectedExpenses)}
+                tone="amber"
+              />
+              <MetricCard
+                icon={<PiggyBank size={18} />}
+                label="Balance proyectado"
+                value={currency(selectedScenario.projectedBalance)}
+                tone={selectedScenario.projectedBalance >= 0 ? 'blue' : 'rose'}
+              />
+            </div>
+
+            <div className="stack-form">
+              <div className="scenario-box">
+                <h3>Notas</h3>
+                <p className="muted">{selectedScenario.notes || 'Sin notas adicionales.'}</p>
+              </div>
+
+              <div className="scenario-box">
+                <h3>Movimientos del escenario</h3>
+                <div className="list-block compact-list">
+                  {selectedScenario.expenseChanges.length > 0 ? (
+                    selectedScenario.expenseChanges.map((change) => (
+                      <article className="list-item" key={change.id}>
+                        <div>
+                          <strong>{change.label}</strong>
+                          <p>
+                            {change.category} ·{' '}
+                            {change.changeType === 'remove_fixed'
+                              ? 'sale del presupuesto fijo'
+                              : change.changeType === 'remove_variable'
+                                ? 'sale del presupuesto variable'
+                                : change.changeType === 'add_fixed'
+                                  ? 'nuevo gasto fijo'
+                                  : 'nuevo gasto variable'}
+                          </p>
+                        </div>
+                        <div className="item-actions">
+                          <span
+                            className={
+                              change.changeType === 'remove_fixed' || change.changeType === 'remove_variable'
+                                ? 'pill positive'
+                                : 'pill negative'
+                            }
+                          >
+                            {change.changeType === 'remove_fixed' || change.changeType === 'remove_variable'
+                              ? '-'
+                              : '+'}
+                            {currency(change.amount)}
+                          </span>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="muted">Este escenario no tiene cambios cargados.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isAddModalOpen ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
