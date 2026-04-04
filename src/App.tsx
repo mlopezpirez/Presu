@@ -301,6 +301,9 @@ function App() {
       return null
     }
 
+    const activeFixedExpenses = snapshot.fixedExpenses.filter((item) =>
+      isFixedExpenseActiveForPeriod(item, scenarioBasePeriod),
+    )
     const scenarioBaseTransactions = snapshot.transactions.filter(
       (item) => item.occurredOn.startsWith(scenarioBasePeriod) && item.type === 'expense',
     )
@@ -308,6 +311,12 @@ function App() {
       (sum, item) => sum + item.amount,
       0,
     )
+    const baseProratedFixedExpenses = activeFixedExpenses
+      .filter((item) => item.isProrated)
+      .reduce((sum, item) => sum + item.amount, 0)
+    const baseCoreFixedExpenses = activeFixedExpenses
+      .filter((item) => !item.isProrated)
+      .reduce((sum, item) => sum + item.amount, 0)
 
     const removedFixedTotal = scenario.expenseChanges
       .filter((item) => item.changeType === 'remove_fixed')
@@ -327,9 +336,17 @@ function App() {
 
     const projectedIncome = snapshot.settings.monthlyIncome + scenario.incomeDelta
     const projectedExpenses =
-      snapshot.fixedExpenses
-        .filter((item) => isFixedExpenseActiveForPeriod(item, scenarioBasePeriod))
-        .reduce((sum, item) => sum + item.amount, 0) -
+      baseCoreFixedExpenses +
+      baseProratedFixedExpenses -
+      removedFixedTotal +
+      baseVariableExpenses -
+      removedVariableTotal +
+      addedFixedTotal +
+      addedVariableTotal +
+      scenario.extraExpenseDelta +
+      scenario.fixedExpenseDelta
+    const projectedExpensesWithoutProrated =
+      baseCoreFixedExpenses -
       removedFixedTotal +
       baseVariableExpenses -
       removedVariableTotal +
@@ -340,8 +357,15 @@ function App() {
     const projectedBalance = projectedIncome - projectedExpenses
 
     return {
+      baseCoreFixedExpenses,
+      baseProratedFixedExpenses,
       baseVariableExpenses,
+      removedFixedTotal,
+      removedVariableTotal,
+      addedFixedTotal,
+      addedVariableTotal,
       projectedIncome,
+      projectedExpensesWithoutProrated,
       projectedExpenses,
       projectedBalance,
     }
@@ -1266,26 +1290,72 @@ function App() {
               </div>
 
               {scenarioPreview ? (
-                <section className="scenario-preview">
-                  <MetricCard
-                    icon={<TrendingUp size={18} />}
-                    label="Ingreso proyectado"
-                    value={currency(scenarioPreview.projectedIncome)}
-                    tone="emerald"
-                  />
-                  <MetricCard
-                    icon={<Filter size={18} />}
-                    label="Gasto proyectado"
-                    value={currency(scenarioPreview.projectedExpenses)}
-                    tone="amber"
-                  />
-                  <MetricCard
-                    icon={<PiggyBank size={18} />}
-                    label="Balance proyectado"
-                    value={currency(scenarioPreview.projectedBalance)}
-                    tone={scenarioPreview.projectedBalance >= 0 ? 'blue' : 'rose'}
-                  />
-                </section>
+                <>
+                  <section className="scenario-preview">
+                    <MetricCard
+                      icon={<TrendingUp size={18} />}
+                      label="Ingreso proyectado"
+                      value={currency(scenarioPreview.projectedIncome)}
+                      tone="emerald"
+                    />
+                    <MetricCard
+                      icon={<Filter size={18} />}
+                      label="Presupuesto real proyectado"
+                      value={currency(scenarioPreview.projectedExpensesWithoutProrated)}
+                      tone="amber"
+                    />
+                    <MetricCard
+                      icon={<CalendarRange size={18} />}
+                      label="Prorrateados incluidos"
+                      value={currency(scenarioPreview.baseProratedFixedExpenses)}
+                      tone="blue"
+                    />
+                    <MetricCard
+                      icon={<PiggyBank size={18} />}
+                      label="Balance proyectado"
+                      value={currency(scenarioPreview.projectedBalance)}
+                      tone={scenarioPreview.projectedBalance >= 0 ? 'blue' : 'rose'}
+                    />
+                  </section>
+
+                  <section className="scenario-box">
+                    <h3>Cómo se calcula el gasto proyectado</h3>
+                    <dl className="scenario-breakdown">
+                      <div>
+                        <dt>Fijos mensuales base</dt>
+                        <dd>{currency(scenarioPreview.baseCoreFixedExpenses)}</dd>
+                      </div>
+                      <div>
+                        <dt>Variables del mes base</dt>
+                        <dd>{currency(scenarioPreview.baseVariableExpenses)}</dd>
+                      </div>
+                      <div>
+                        <dt>Fijos que se eliminan</dt>
+                        <dd>-{currency(scenarioPreview.removedFixedTotal)}</dd>
+                      </div>
+                      <div>
+                        <dt>Variables que se eliminan</dt>
+                        <dd>-{currency(scenarioPreview.removedVariableTotal)}</dd>
+                      </div>
+                      <div>
+                        <dt>Fijos que se agregan</dt>
+                        <dd>+{currency(scenarioPreview.addedFixedTotal)}</dd>
+                      </div>
+                      <div>
+                        <dt>Variables que se agregan</dt>
+                        <dd>+{currency(scenarioPreview.addedVariableTotal)}</dd>
+                      </div>
+                      <div>
+                        <dt>Prorrateados anuales</dt>
+                        <dd>+{currency(scenarioPreview.baseProratedFixedExpenses)}</dd>
+                      </div>
+                      <div>
+                        <dt>Total proyectado</dt>
+                        <dd>{currency(scenarioPreview.projectedExpenses)}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </>
               ) : null}
 
               <button className="primary-button" type="submit" disabled={status !== 'idle'}>
