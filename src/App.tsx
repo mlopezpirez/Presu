@@ -6,7 +6,6 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowRightLeft,
-  BadgeDollarSign,
   CalendarRange,
   Camera,
   CirclePlus,
@@ -909,10 +908,16 @@ function App() {
               tone="emerald"
             />
             <MetricCard
-              icon={<BadgeDollarSign size={18} />}
-              label="Presupuesto real"
-              value={currency(metrics.totalExpensesWithoutProrated)}
+              icon={<TrendingUp size={18} />}
+              label="Gastos variables"
+              value={currency(metrics.visibleVariableExpenses)}
               tone="amber"
+            />
+            <MetricCard
+              icon={<Landmark size={18} />}
+              label="Gastos fijos"
+              value={currency(metrics.visibleCoreFixedExpenses)}
+              tone="blue"
             />
             <MetricCard
               icon={<CalendarRange size={18} />}
