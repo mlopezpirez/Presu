@@ -335,6 +335,14 @@ function App() {
       .reduce((sum, item) => sum + item.amount, 0)
 
     const projectedIncome = snapshot.settings.monthlyIncome + scenario.incomeDelta
+    const baseExpensesWithoutProrated = baseCoreFixedExpenses + baseVariableExpenses
+    const scenarioDeltaWithoutProrated =
+      -removedFixedTotal -
+      removedVariableTotal +
+      addedFixedTotal +
+      addedVariableTotal +
+      scenario.extraExpenseDelta +
+      scenario.fixedExpenseDelta
     const projectedExpenses =
       baseCoreFixedExpenses +
       baseProratedFixedExpenses -
@@ -357,6 +365,7 @@ function App() {
     const projectedBalance = projectedIncome - projectedExpenses
 
     return {
+      baseExpensesWithoutProrated,
       baseCoreFixedExpenses,
       baseProratedFixedExpenses,
       baseVariableExpenses,
@@ -364,6 +373,7 @@ function App() {
       removedVariableTotal,
       addedFixedTotal,
       addedVariableTotal,
+      scenarioDeltaWithoutProrated,
       projectedIncome,
       projectedExpensesWithoutProrated,
       projectedExpenses,
@@ -1300,26 +1310,28 @@ function App() {
                     />
                     <MetricCard
                       icon={<Filter size={18} />}
-                      label="Presupuesto real proyectado"
-                      value={currency(scenarioPreview.projectedExpensesWithoutProrated)}
+                      label="Gasto base actual"
+                      value={currency(scenarioPreview.baseExpensesWithoutProrated)}
                       tone="amber"
                     />
                     <MetricCard
                       icon={<CalendarRange size={18} />}
-                      label="Prorrateados incluidos"
-                      value={currency(scenarioPreview.baseProratedFixedExpenses)}
-                      tone="blue"
+                      label="Impacto del escenario"
+                      value={`${
+                        scenarioPreview.scenarioDeltaWithoutProrated >= 0 ? '+' : '-'
+                      }${currency(Math.abs(scenarioPreview.scenarioDeltaWithoutProrated))}`}
+                      tone={scenarioPreview.scenarioDeltaWithoutProrated <= 0 ? 'blue' : 'rose'}
                     />
                     <MetricCard
                       icon={<PiggyBank size={18} />}
-                      label="Balance proyectado"
-                      value={currency(scenarioPreview.projectedBalance)}
-                      tone={scenarioPreview.projectedBalance >= 0 ? 'blue' : 'rose'}
+                      label="Presupuesto final"
+                      value={currency(scenarioPreview.projectedExpensesWithoutProrated)}
+                      tone="rose"
                     />
                   </section>
 
                   <section className="scenario-box">
-                    <h3>Cómo se calcula el gasto proyectado</h3>
+                    <h3>Cómo se calcula el presupuesto final</h3>
                     <dl className="scenario-breakdown">
                       <div>
                         <dt>Fijos mensuales base</dt>
@@ -1346,11 +1358,22 @@ function App() {
                         <dd>+{currency(scenarioPreview.addedVariableTotal)}</dd>
                       </div>
                       <div>
+                        <dt>Impacto neto del escenario</dt>
+                        <dd>
+                          {scenarioPreview.scenarioDeltaWithoutProrated >= 0 ? '+' : '-'}
+                          {currency(Math.abs(scenarioPreview.scenarioDeltaWithoutProrated))}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Presupuesto final sin prorrateados</dt>
+                        <dd>{currency(scenarioPreview.projectedExpensesWithoutProrated)}</dd>
+                      </div>
+                      <div>
                         <dt>Prorrateados anuales</dt>
                         <dd>+{currency(scenarioPreview.baseProratedFixedExpenses)}</dd>
                       </div>
                       <div>
-                        <dt>Total proyectado</dt>
+                        <dt>Total final incluyendo prorrateados</dt>
                         <dd>{currency(scenarioPreview.projectedExpenses)}</dd>
                       </div>
                     </dl>
