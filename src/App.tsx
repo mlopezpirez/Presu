@@ -43,6 +43,7 @@ import type {
   FixedExpenseDraft,
   PeriodMode,
   ScenarioDraft,
+  Transaction,
   TransactionDraft,
 } from './types'
 
@@ -311,6 +312,10 @@ function App() {
       .filter((item) => item.changeType === 'remove_fixed')
       .reduce((sum, item) => sum + item.amount, 0)
 
+    const removedVariableTotal = scenario.expenseChanges
+      .filter((item) => item.changeType === 'remove_variable')
+      .reduce((sum, item) => sum + item.amount, 0)
+
     const addedFixedTotal = scenario.expenseChanges
       .filter((item) => item.changeType === 'add_fixed')
       .reduce((sum, item) => sum + item.amount, 0)
@@ -325,8 +330,9 @@ function App() {
         .filter((item) => isFixedExpenseActiveForPeriod(item, scenarioBasePeriod))
         .reduce((sum, item) => sum + item.amount, 0) -
       removedFixedTotal +
+      baseVariableExpenses -
+      removedVariableTotal +
       addedFixedTotal +
-      baseVariableExpenses +
       addedVariableTotal +
       scenario.extraExpenseDelta +
       scenario.fixedExpenseDelta
@@ -654,6 +660,31 @@ function App() {
               changeType: 'remove_fixed',
               fixedExpenseId: expense.id,
               label: expense.name,
+              category: expense.category,
+              amount: expense.amount,
+            },
+          ],
+    }))
+  }
+
+  function toggleVariableExpenseInScenario(
+    expense: Pick<Transaction, 'id' | 'title' | 'category' | 'amount'>,
+  ) {
+    const variableKey = `variable:${expense.id}`
+    const exists = scenario.expenseChanges.some(
+      (item) => item.changeType === 'remove_variable' && item.fixedExpenseId === variableKey,
+    )
+
+    setScenario((current) => ({
+      ...current,
+      expenseChanges: exists
+        ? current.expenseChanges.filter((item) => item.fixedExpenseId !== variableKey)
+        : [
+            ...current.expenseChanges,
+            {
+              changeType: 'remove_variable',
+              fixedExpenseId: variableKey,
+              label: expense.title,
               category: expense.category,
               amount: expense.amount,
             },
@@ -1097,6 +1128,41 @@ function App() {
                 </div>
 
                 <div className="scenario-box">
+                  <h3>Gastos variables que sacarías</h3>
+                  <div className="check-list scroll-check-list">
+                    {snapshot.transactions
+                      .filter(
+                        (expense) =>
+                          expense.type === 'expense' &&
+                          expense.occurredOn.startsWith(scenarioBasePeriod),
+                      )
+                      .map((expense) => {
+                        const checked = scenario.expenseChanges.some(
+                          (item) =>
+                            item.changeType === 'remove_variable' &&
+                            item.fixedExpenseId === `variable:${expense.id}`,
+                        )
+
+                        return (
+                          <label className="check-item check-card" key={expense.id}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleVariableExpenseInScenario(expense)}
+                            />
+                            <span>
+                              {expense.title}
+                              <small>
+                                {expense.category} · {currency(expense.amount)}
+                              </small>
+                            </span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                </div>
+
+                <div className="scenario-box">
                   <h3>Gastos que agregarías</h3>
                   <div className="stack-form mini-form">
                     <div className="form-row">
@@ -1159,14 +1225,24 @@ function App() {
                         {item.category} ·{' '}
                         {item.changeType === 'remove_fixed'
                           ? 'sale del presupuesto'
+                          : item.changeType === 'remove_variable'
+                            ? 'gasto variable que desaparece'
                           : item.changeType === 'add_fixed'
                             ? 'nuevo gasto fijo'
                             : 'nuevo gasto variable'}
                       </p>
                     </div>
                     <div className="item-actions">
-                      <span className={item.changeType === 'remove_fixed' ? 'pill positive' : 'pill negative'}>
-                        {item.changeType === 'remove_fixed' ? '-' : '+'}
+                      <span
+                        className={
+                          item.changeType === 'remove_fixed' || item.changeType === 'remove_variable'
+                            ? 'pill positive'
+                            : 'pill negative'
+                        }
+                      >
+                        {item.changeType === 'remove_fixed' || item.changeType === 'remove_variable'
+                          ? '-'
+                          : '+'}
                         {currency(item.amount)}
                       </span>
                       <button className="ghost-button" type="button" onClick={() => removeScenarioItem(index)}>

@@ -34,7 +34,7 @@ export type FixedExpenseDraft = Omit<FixedExpense, 'id' | 'createdAt' | 'endsOn'
 
 export type ScenarioExpenseChange = {
   id: string
-  changeType: 'remove_fixed' | 'add_fixed' | 'add_variable'
+  changeType: 'remove_fixed' | 'remove_variable' | 'add_fixed' | 'add_variable'
   fixedExpenseId?: string
   label: string
   category: string

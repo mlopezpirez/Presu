@@ -1,7 +1,7 @@
 create table if not exists public.budget_scenario_expense_changes (
   id uuid primary key default gen_random_uuid(),
   scenario_id uuid not null references public.budget_scenarios(id) on delete cascade,
-  change_type text not null check (change_type in ('remove_fixed', 'add_fixed', 'add_variable')),
+  change_type text not null check (change_type in ('remove_fixed', 'remove_variable', 'add_fixed', 'add_variable')),
   fixed_expense_id uuid references public.fixed_expenses(id) on delete set null,
   label text not null,
   category_name text not null,

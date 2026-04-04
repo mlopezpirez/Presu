@@ -567,6 +567,13 @@ textarea:focus {
   gap: 10px;
 }
 
+.scroll-check-list {
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
 .check-item {
   display: flex;
   align-items: center;
@@ -586,6 +593,22 @@ textarea:focus {
 .check-item span {
   flex: 1;
   min-width: 0;
+}
+
+.check-card {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(122, 103, 72, 0.12);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.check-card span {
+  display: grid;
+  gap: 4px;
+}
+
+.check-card small {
+  color: #736656;
 }
 
 .mini-form {
@@ -728,5 +751,13 @@ textarea:focus {
 
   .check-item {
     align-items: flex-start;
+  }
+
+  .scenario-box {
+    padding: 16px;
+  }
+
+  .scroll-check-list {
+    max-height: 220px;
   }
 }

@@ -150,6 +150,10 @@ function computeScenario(
     .filter((change) => change.changeType === 'remove_fixed')
     .reduce((sum, change) => sum + change.amount, 0)
 
+  const removedVariableTotal = item.expenseChanges
+    .filter((change) => change.changeType === 'remove_variable')
+    .reduce((sum, change) => sum + change.amount, 0)
+
   const addedFixedTotal = item.expenseChanges
     .filter((change) => change.changeType === 'add_fixed')
     .reduce((sum, change) => sum + change.amount, 0)
@@ -167,8 +171,9 @@ function computeScenario(
     variableExpenses +
     activeFixedTotal -
     removedFixedTotal +
+    addedVariableTotal -
+    removedVariableTotal +
     addedFixedTotal +
-    addedVariableTotal +
     item.extraExpenseDelta +
     item.fixedExpenseDelta
   const projectedBalance = projectedIncome - projectedExpenses
