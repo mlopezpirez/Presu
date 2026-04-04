@@ -343,7 +343,6 @@ function App() {
       projectedIncome,
       projectedExpenses,
       projectedBalance,
-      hitsGoal: projectedBalance >= snapshot.settings.savingsGoal,
     }
   }, [scenario, scenarioBasePeriod, snapshot, metrics])
 
@@ -1273,12 +1272,6 @@ function App() {
                     value={currency(scenarioPreview.projectedBalance)}
                     tone={scenarioPreview.projectedBalance >= 0 ? 'blue' : 'rose'}
                   />
-                  <MetricCard
-                    icon={<Scale size={18} />}
-                    label="¿Llega a la meta?"
-                    value={scenarioPreview.hitsGoal ? 'Sí' : 'No'}
-                    tone={scenarioPreview.hitsGoal ? 'blue' : 'rose'}
-                  />
                 </section>
               ) : null}
 
@@ -1320,15 +1313,14 @@ function App() {
                       <dt>Gasto ajustado</dt>
                       <dd>{currency(item.projectedExpenses)}</dd>
                     </div>
-                    <div>
-                      <dt>Meta de ahorro</dt>
-                      <dd>{item.hitsSavingsGoal ? 'Cumple' : 'No llega'}</dd>
-                    </div>
                   </dl>
                   <div className="scenario-tag-list">
                     {item.expenseChanges.map((change) => (
                       <span className="badge small-badge" key={change.id}>
-                        {change.changeType === 'remove_fixed' ? 'Sale' : 'Suma'}: {change.label}
+                        {change.changeType === 'remove_fixed' || change.changeType === 'remove_variable'
+                          ? 'Sale'
+                          : 'Suma'}
+                        : {change.label}
                       </span>
                     ))}
                   </div>

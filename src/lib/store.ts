@@ -14,7 +14,7 @@ import type {
   TransactionDraft,
 } from '../types'
 
-type DemoScenarioRecord = Omit<BudgetScenario, 'projectedIncome' | 'projectedExpenses' | 'projectedBalance' | 'hitsSavingsGoal'> & {
+type DemoScenarioRecord = Omit<BudgetScenario, 'projectedIncome' | 'projectedExpenses' | 'projectedBalance'> & {
   expenseChanges: ScenarioExpenseChange[]
 }
 
@@ -183,7 +183,6 @@ function computeScenario(
     projectedIncome,
     projectedExpenses,
     projectedBalance,
-    hitsSavingsGoal: projectedBalance >= settings.savingsGoal,
   }
 }
 

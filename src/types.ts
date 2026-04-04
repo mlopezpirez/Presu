@@ -52,7 +52,6 @@ export type BudgetScenario = {
   projectedIncome: number
   projectedExpenses: number
   projectedBalance: number
-  hitsSavingsGoal: boolean
   createdAt: string
 }
 
@@ -68,7 +67,6 @@ type ScenarioDraftBase = Omit<
   | 'projectedIncome'
   | 'projectedExpenses'
   | 'projectedBalance'
-  | 'hitsSavingsGoal'
 >
 
 export type PeriodMode = 'month' | 'all'
