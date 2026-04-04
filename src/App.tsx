@@ -137,6 +137,7 @@ function App() {
   const [duplicateConfirmationRequired, setDuplicateConfirmationRequired] = useState(false)
   const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
   const [selectedScenario, setSelectedScenario] = useState<FinanceSnapshot['scenarios'][number] | null>(null)
+  const currentMonth = todayLocalIso().slice(0, 7)
 
   useEffect(() => {
     void loadSnapshot()
@@ -205,7 +206,20 @@ function App() {
     )
   }, [categoryFilter, snapshot])
 
-  const effectiveFixedPeriod = selectedPeriod || todayLocalIso().slice(0, 7)
+  const effectiveFixedPeriod = selectedPeriod || currentMonth
+  const isCurrentMonthView = periodMode === 'month' && effectiveFixedPeriod === currentMonth
+  const paidFixedExpenseIds = useMemo(() => {
+    if (!snapshot) {
+      return new Set<string>()
+    }
+
+    return new Set(
+      snapshot.fixedExpensePayments
+        .filter((item) => item.periodMonth === effectiveFixedPeriod && item.isPaid)
+        .map((item) => item.fixedExpenseId),
+    )
+  }, [effectiveFixedPeriod, snapshot])
+
   const visibleFixedExpenses = useMemo(() => {
     if (!snapshot) {
       return []
@@ -253,6 +267,14 @@ function App() {
     const totalExpensesWithoutProrated = visibleVariableExpenses + totalCoreFixedExpensesForPeriods
     const balance = visibleIncome - totalExpenses
     const coverage = visibleIncome === 0 ? 0 : (totalExpenses / visibleIncome) * 100
+    const paidFixedExpensesForCurrentMonth = isCurrentMonthView
+      ? filteredFixedExpenses
+          .filter((item) => isFixedExpenseActiveForPeriod(item, effectiveFixedPeriod))
+          .filter((item) => paidFixedExpenseIds.has(item.id))
+          .reduce((sum, item) => sum + item.amount, 0)
+      : totalFixedExpensesForPeriods
+    const currentMomentBalance =
+      visibleIncome - visibleVariableExpenses - paidFixedExpensesForCurrentMonth
 
     return {
       monthsCount: months.length,
@@ -265,8 +287,19 @@ function App() {
       totalExpenses,
       balance,
       coverage,
+      paidFixedExpensesForCurrentMonth,
+      currentMomentBalance,
     }
-  }, [effectiveFixedPeriod, filteredFixedExpenses, periodMode, periodTransactions, snapshot, visibleTransactions])
+  }, [
+    effectiveFixedPeriod,
+    filteredFixedExpenses,
+    isCurrentMonthView,
+    paidFixedExpenseIds,
+    periodMode,
+    periodTransactions,
+    snapshot,
+    visibleTransactions,
+  ])
 
   const expenseCategories = useMemo(() => {
     if (!snapshot) {
@@ -418,6 +451,10 @@ function App() {
 
   async function removeScenario(id: string) {
     await withSave(async () => financeStore.deleteScenario(id))
+  }
+
+  async function toggleFixedExpensePaid(id: string, isPaid: boolean) {
+    await withSave(async () => financeStore.setFixedExpensePaid(id, effectiveFixedPeriod, isPaid))
   }
 
   async function withSave(action: () => Promise<void>) {
@@ -937,6 +974,14 @@ function App() {
               value={currency(metrics.balance)}
               tone={metrics.balance >= 0 ? 'blue' : 'rose'}
             />
+            {isCurrentMonthView ? (
+              <MetricCard
+                icon={<ArrowRightLeft size={18} />}
+                label="Saldo al momento"
+                value={currency(metrics.currentMomentBalance)}
+                tone={metrics.currentMomentBalance >= 0 ? 'emerald' : 'rose'}
+              />
+            ) : null}
           </section>
 
           <section className="content-grid">
@@ -1048,6 +1093,11 @@ function App() {
                   Mostrando vigentes en {monthLabel(`${effectiveFixedPeriod}-01`)}. Editar o eliminar
                   afecta desde ese mes en adelante.
                 </p>
+                {isCurrentMonthView ? (
+                  <p className="scenario-helper">
+                    Marcá los fijos que ya pagaste para ver un saldo al momento más real.
+                  </p>
+                ) : null}
                 <div className="list-block compact-list">
                   {snapshot.fixedExpenses
                     .filter((item) => isFixedExpenseActiveForPeriod(item, effectiveFixedPeriod))
@@ -1067,6 +1117,21 @@ function App() {
                       </div>
                       <div className="item-actions">
                         <span className="pill neutral">{currency(item.amount)}</span>
+                        {isCurrentMonthView ? (
+                          <button
+                            className={
+                              paidFixedExpenseIds.has(item.id)
+                                ? 'toggle-pay-button active'
+                                : 'toggle-pay-button'
+                            }
+                            type="button"
+                            onClick={() =>
+                              void toggleFixedExpensePaid(item.id, !paidFixedExpenseIds.has(item.id))
+                            }
+                          >
+                            {paidFixedExpenseIds.has(item.id) ? 'Pagado' : 'Marcar pago'}
+                          </button>
+                        ) : null}
                         <button className="ghost-button" type="button" onClick={() => openFixedExpenseEditor(item.id)}>
                           <Pencil size={16} />
                         </button>

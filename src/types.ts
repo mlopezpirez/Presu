@@ -32,6 +32,15 @@ export type FixedExpense = {
 
 export type FixedExpenseDraft = Omit<FixedExpense, 'id' | 'createdAt' | 'endsOn'>
 
+export type FixedExpensePayment = {
+  id: string
+  fixedExpenseId: string
+  periodMonth: string
+  isPaid: boolean
+  paidAt?: string
+  createdAt: string
+}
+
 export type ScenarioExpenseChange = {
   id: string
   changeType: 'remove_fixed' | 'remove_variable' | 'add_fixed' | 'add_variable'
@@ -87,6 +96,7 @@ export type FinanceSnapshot = {
   settings: FinanceSettings
   transactions: Transaction[]
   fixedExpenses: FixedExpense[]
+  fixedExpensePayments: FixedExpensePayment[]
   scenarios: BudgetScenario[]
   availablePeriods: string[]
   summary: {

@@ -65,6 +65,16 @@ create table if not exists public.transactions (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.fixed_expense_payments (
+  id uuid primary key default gen_random_uuid(),
+  fixed_expense_id uuid not null references public.fixed_expenses(id) on delete cascade,
+  period_month date not null,
+  is_paid boolean not null default true,
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (fixed_expense_id, period_month)
+);
+
 create table if not exists public.budget_scenarios (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -79,6 +89,7 @@ create table if not exists public.budget_scenarios (
 create index if not exists idx_transactions_period_month on public.transactions (period_month desc);
 create index if not exists idx_transactions_type_period on public.transactions (type, period_month desc);
 create index if not exists idx_fixed_expenses_active on public.fixed_expenses (is_active) where is_active = true;
+create index if not exists idx_fixed_expense_payments_period on public.fixed_expense_payments (period_month desc);
 
 insert into public.finance_settings (id, monthly_income, savings_goal)
 values (1, 146935, 10000)
@@ -111,6 +122,7 @@ alter table public.budget_categories enable row level security;
 alter table public.import_batches enable row level security;
 alter table public.fixed_expenses enable row level security;
 alter table public.transactions enable row level security;
+alter table public.fixed_expense_payments enable row level security;
 alter table public.budget_scenarios enable row level security;
 
 create policy "Allow all on finance_settings"
@@ -145,6 +157,12 @@ with check (true);
 
 create policy "Allow all on transactions"
 on public.transactions
+for all
+using (true)
+with check (true);
+
+create policy "Allow all on fixed_expense_payments"
+on public.fixed_expense_payments
 for all
 using (true)
 with check (true);

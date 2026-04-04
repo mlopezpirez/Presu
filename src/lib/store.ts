@@ -8,6 +8,7 @@ import type {
   FinanceSnapshot,
   FixedExpense,
   FixedExpenseDraft,
+  FixedExpensePayment,
   ScenarioDraft,
   ScenarioExpenseChange,
   Transaction,
@@ -22,6 +23,7 @@ type DemoStore = {
   settings: FinanceSettings
   transactions: Transaction[]
   fixedExpenses: FixedExpense[]
+  fixedExpensePayments: FixedExpensePayment[]
   scenarios: DemoScenarioRecord[]
 }
 
@@ -62,6 +64,7 @@ function getInitialDemoStore(): DemoStore {
     settings: demoSettings,
     transactions: demoTransactions,
     fixedExpenses: demoFixedExpenses,
+    fixedExpensePayments: [],
     scenarios: [],
   }
 }
@@ -204,6 +207,7 @@ function buildSnapshot(data: DemoStore, sourceLabel: string, source: FinanceSnap
     settings: data.settings,
     transactions: sortByDate(data.transactions),
     fixedExpenses: sortByDate(data.fixedExpenses),
+    fixedExpensePayments: sortByDate(data.fixedExpensePayments),
     scenarios: data.scenarios.map((item) =>
       computeScenario(
         item,
@@ -238,18 +242,25 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     { data: settingsData, error: settingsError },
     { data: transactionsData, error: transactionsError },
     { data: fixedExpensesData, error: fixedExpensesError },
+    { data: fixedExpensePaymentsData, error: fixedExpensePaymentsError },
     { data: scenariosData, error: scenariosError },
     { data: scenarioChangesData, error: scenarioChangesError },
   ] = await Promise.all([
     supabase.from('finance_settings').select('*').limit(1).maybeSingle(),
     supabase.from('transactions').select('*').order('occurred_on', { ascending: false }),
     supabase.from('fixed_expenses').select('*').eq('is_active', true).order('created_at', { ascending: false }),
+    supabase.from('fixed_expense_payments').select('*').order('created_at', { ascending: false }),
     supabase.from('budget_scenarios').select('*').order('created_at', { ascending: false }),
     supabase.from('budget_scenario_expense_changes').select('*').order('created_at', { ascending: true }),
   ])
 
   const firstError =
-    settingsError ?? transactionsError ?? fixedExpensesError ?? scenariosError ?? scenarioChangesError
+    settingsError ??
+    transactionsError ??
+    fixedExpensesError ??
+    fixedExpensePaymentsError ??
+    scenariosError ??
+    scenarioChangesError
   if (firstError) {
     throw new Error(firstError.message)
   }
@@ -284,6 +295,15 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     isProrated: Boolean(item.is_prorated),
     startsOn: item.starts_on,
     endsOn: item.ends_on ?? undefined,
+    createdAt: item.created_at,
+  }))
+
+  const fixedExpensePayments: FixedExpensePayment[] = (fixedExpensePaymentsData ?? []).map((item) => ({
+    id: item.id,
+    fixedExpenseId: item.fixed_expense_id,
+    periodMonth: String(item.period_month).slice(0, 7),
+    isPaid: Boolean(item.is_paid),
+    paidAt: item.paid_at ?? undefined,
     createdAt: item.created_at,
   }))
 
@@ -332,6 +352,7 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     settings,
     transactions,
     fixedExpenses,
+    fixedExpensePayments,
     scenarios,
     availablePeriods,
     summary: {
@@ -374,6 +395,42 @@ async function addDemoFixedExpense(draft: FixedExpenseDraft) {
   writeDemoStore(data)
 }
 
+async function setDemoFixedExpensePaid(
+  fixedExpenseId: string,
+  periodMonth: string,
+  isPaid: boolean,
+) {
+  const data = readDemoStore()
+  const existing = data.fixedExpensePayments.find(
+    (item) => item.fixedExpenseId === fixedExpenseId && item.periodMonth === periodMonth,
+  )
+
+  if (isPaid) {
+    if (existing) {
+      data.fixedExpensePayments = data.fixedExpensePayments.map((item) =>
+        item.id === existing.id
+          ? { ...item, isPaid: true, paidAt: new Date().toISOString() }
+          : item,
+      )
+    } else {
+      data.fixedExpensePayments.unshift({
+        id: crypto.randomUUID(),
+        fixedExpenseId,
+        periodMonth,
+        isPaid: true,
+        paidAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      })
+    }
+  } else {
+    data.fixedExpensePayments = data.fixedExpensePayments.filter(
+      (item) => !(item.fixedExpenseId === fixedExpenseId && item.periodMonth === periodMonth),
+    )
+  }
+
+  writeDemoStore(data)
+}
+
 async function addDemoScenario(draft: ScenarioDraft) {
   const data = readDemoStore()
   data.scenarios.unshift({
@@ -402,6 +459,7 @@ async function deleteDemoTransaction(id: string) {
 async function deleteDemoFixedExpense(id: string, effectiveMonth: string) {
   const data = readDemoStore()
   const start = monthStart(effectiveMonth)
+  data.fixedExpensePayments = data.fixedExpensePayments.filter((item) => item.fixedExpenseId !== id)
   data.fixedExpenses = data.fixedExpenses.flatMap((item) => {
     if (item.id !== id) {
       return [item]
@@ -730,6 +788,46 @@ async function addSupabaseFixedExpense(draft: FixedExpenseDraft) {
   }
 }
 
+async function setSupabaseFixedExpensePaid(
+  fixedExpenseId: string,
+  periodMonth: string,
+  isPaid: boolean,
+) {
+  if (!supabase) {
+    return
+  }
+
+  const normalizedPeriodMonth = `${periodMonth}-01`
+
+  if (!isPaid) {
+    const { error } = await supabase
+      .from('fixed_expense_payments')
+      .delete()
+      .eq('fixed_expense_id', fixedExpenseId)
+      .eq('period_month', normalizedPeriodMonth)
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return
+  }
+
+  const { error } = await supabase.from('fixed_expense_payments').upsert(
+    {
+      fixed_expense_id: fixedExpenseId,
+      period_month: normalizedPeriodMonth,
+      is_paid: true,
+      paid_at: new Date().toISOString(),
+    },
+    { onConflict: 'fixed_expense_id,period_month' },
+  )
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
 async function deleteSupabaseFixedExpense(id: string, effectiveMonth: string) {
   if (!supabase) {
     return
@@ -869,5 +967,10 @@ export const financeStore = {
     return isSupabaseConfigured
       ? deleteFromSupabase('budget_scenarios', id)
       : deleteDemoScenario(id)
+  },
+  async setFixedExpensePaid(fixedExpenseId: string, periodMonth: string, isPaid: boolean) {
+    return isSupabaseConfigured
+      ? setSupabaseFixedExpensePaid(fixedExpenseId, periodMonth, isPaid)
+      : setDemoFixedExpensePaid(fixedExpenseId, periodMonth, isPaid)
   },
 }
