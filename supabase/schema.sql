@@ -68,6 +68,7 @@ create table if not exists public.transactions (
 create table if not exists public.budget_scenarios (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  base_period_month date not null default date_trunc('month', now())::date,
   income_delta numeric(12, 2) not null default 0,
   extra_expense_delta numeric(12, 2) not null default 0,
   fixed_expense_delta numeric(12, 2) not null default 0,

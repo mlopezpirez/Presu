@@ -79,6 +79,7 @@ const initialFixedExpense: FixedExpenseDraft = {
 
 const initialScenario: ScenarioDraft = {
   name: '',
+  basePeriodMonth: '',
   incomeDelta: 0,
   extraExpenseDelta: 0,
   fixedExpenseDelta: 0,
@@ -392,7 +393,10 @@ function App() {
     setError(null)
 
     try {
-      await financeStore.addScenario(scenario)
+      await financeStore.addScenario({
+        ...scenario,
+        basePeriodMonth: scenarioBasePeriod,
+      })
       setScenario(initialScenario)
       setScenarioItemLabel('')
       setScenarioItemCategory('General')

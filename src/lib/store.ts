@@ -142,7 +142,7 @@ function getAvailablePeriods(transactions: Transaction[], fixedExpenses: FixedEx
 function computeScenario(
   item: DemoScenarioRecord,
   settings: FinanceSettings,
-  variableExpenses: number,
+  transactions: Transaction[],
   fixedExpenses: FixedExpense[],
   basePeriod: string,
 ): BudgetScenario {
@@ -166,6 +166,9 @@ function computeScenario(
     (sum, expense) => sum + expense.amount,
     0,
   )
+  const variableExpenses = transactions
+    .filter((entry) => entry.type === 'expense' && entry.occurredOn.startsWith(basePeriod))
+    .reduce((sum, entry) => sum + entry.amount, 0)
   const projectedIncome = settings.monthlyIncome + item.incomeDelta
   const projectedExpenses =
     variableExpenses +
@@ -187,11 +190,11 @@ function computeScenario(
 }
 
 function buildSnapshot(data: DemoStore, sourceLabel: string, source: FinanceSnapshot['summary']['dataSource']): FinanceSnapshot {
+  const availablePeriods = getAvailablePeriods(data.transactions, data.fixedExpenses)
+  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
   const totalVariableExpenses = data.transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
-  const availablePeriods = getAvailablePeriods(data.transactions, data.fixedExpenses)
-  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
   const totalFixedExpenses = fixedExpensesForPeriod(data.fixedExpenses, latestPeriod.slice(0, 7)).reduce(
     (sum, item) => sum + item.amount,
     0,
@@ -202,7 +205,13 @@ function buildSnapshot(data: DemoStore, sourceLabel: string, source: FinanceSnap
     transactions: sortByDate(data.transactions),
     fixedExpenses: sortByDate(data.fixedExpenses),
     scenarios: data.scenarios.map((item) =>
-      computeScenario(item, data.settings, totalVariableExpenses, data.fixedExpenses, latestPeriod.slice(0, 7)),
+      computeScenario(
+        item,
+        data.settings,
+        data.transactions,
+        data.fixedExpenses,
+        item.basePeriodMonth || latestPeriod.slice(0, 7),
+      ),
     ),
     availablePeriods,
     summary: {
@@ -293,17 +302,18 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     scenarioChangesById.set(item.scenario_id, current)
   }
 
+  const availablePeriods = getAvailablePeriods(transactions, fixedExpenses)
+  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
   const totalVariableExpenses = transactions
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + item.amount, 0)
-  const availablePeriods = getAvailablePeriods(transactions, fixedExpenses)
-  const latestPeriod = availablePeriods[0] ?? monthStart(new Date().toISOString()).slice(0, 7)
 
   const scenarios: BudgetScenario[] = (scenariosData ?? []).map((item) =>
     computeScenario(
       {
         id: item.id,
         name: item.name,
+        basePeriodMonth: item.base_period_month?.slice(0, 7) ?? latestPeriod.slice(0, 7),
         incomeDelta: Number(item.income_delta),
         extraExpenseDelta: Number(item.extra_expense_delta),
         fixedExpenseDelta: Number(item.fixed_expense_delta),
@@ -312,9 +322,9 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
         createdAt: item.created_at,
       },
       settings,
-      totalVariableExpenses,
+      transactions,
       fixedExpenses,
-      latestPeriod.slice(0, 7),
+      item.base_period_month?.slice(0, 7) ?? latestPeriod.slice(0, 7),
     ),
   )
 
@@ -369,6 +379,7 @@ async function addDemoScenario(draft: ScenarioDraft) {
   data.scenarios.unshift({
     id: crypto.randomUUID(),
     name: draft.name,
+    basePeriodMonth: draft.basePeriodMonth,
     incomeDelta: draft.incomeDelta,
     extraExpenseDelta: draft.extraExpenseDelta,
     fixedExpenseDelta: draft.fixedExpenseDelta,
@@ -762,6 +773,7 @@ async function addSupabaseScenario(draft: ScenarioDraft) {
     .from('budget_scenarios')
     .insert({
       name: draft.name,
+      base_period_month: `${draft.basePeriodMonth}-01`,
       income_delta: draft.incomeDelta,
       extra_expense_delta: draft.extraExpenseDelta,
       fixed_expense_delta: draft.fixedExpenseDelta,

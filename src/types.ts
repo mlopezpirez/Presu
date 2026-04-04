@@ -44,6 +44,7 @@ export type ScenarioExpenseChange = {
 export type BudgetScenario = {
   id: string
   name: string
+  basePeriodMonth: string
   incomeDelta: number
   extraExpenseDelta: number
   fixedExpenseDelta: number
