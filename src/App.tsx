@@ -72,6 +72,7 @@ const initialFixedExpense: FixedExpenseDraft = {
   category: 'Hogar',
   dueDay: 1,
   ownerLabel: '',
+  isProrated: false,
   startsOn: todayLocalIso().slice(0, 7) + '-01',
 }
 
@@ -236,7 +237,18 @@ function App() {
           .reduce((periodSum, item) => periodSum + item.amount, 0),
       0,
     )
+    const totalProratedExpensesForPeriods = months.reduce(
+      (sum, period) =>
+        sum +
+        filteredFixedExpenses
+          .filter((item) => isFixedExpenseActiveForPeriod(item, period) && item.isProrated)
+          .reduce((periodSum, item) => periodSum + item.amount, 0),
+      0,
+    )
+    const totalCoreFixedExpensesForPeriods =
+      totalFixedExpensesForPeriods - totalProratedExpensesForPeriods
     const totalExpenses = visibleVariableExpenses + totalFixedExpensesForPeriods
+    const totalExpensesWithoutProrated = visibleVariableExpenses + totalCoreFixedExpensesForPeriods
     const balance = visibleIncome - totalExpenses
     const coverage = visibleIncome === 0 ? 0 : (totalExpenses / visibleIncome) * 100
 
@@ -244,7 +256,10 @@ function App() {
       monthsCount: months.length,
       visibleIncome,
       visibleVariableExpenses,
+      visibleCoreFixedExpenses: totalCoreFixedExpensesForPeriods,
+      visibleProratedExpenses: totalProratedExpensesForPeriods,
       visibleFixedExpenses: totalFixedExpensesForPeriods,
+      totalExpensesWithoutProrated,
       totalExpenses,
       balance,
       coverage,
@@ -615,6 +630,7 @@ function App() {
       amount: target.amount,
       dueDay: target.dueDay,
       ownerLabel: target.ownerLabel,
+      isProrated: target.isProrated,
       startsOn: `${effectiveFixedPeriod}-01`,
     })
     setAddFlowMode('manual')
@@ -815,21 +831,27 @@ function App() {
             />
             <MetricCard
               icon={<BadgeDollarSign size={18} />}
-              label="Gasto del período"
-              value={currency(metrics.totalExpenses)}
+              label="Presupuesto real"
+              value={currency(metrics.totalExpensesWithoutProrated)}
               tone="amber"
+            />
+            <MetricCard
+              icon={<CalendarRange size={18} />}
+              label="Anuales prorrateados"
+              value={currency(metrics.visibleProratedExpenses)}
+              tone="blue"
+            />
+            <MetricCard
+              icon={<Scale size={18} />}
+              label="Gasto total presupuestado"
+              value={currency(metrics.totalExpenses)}
+              tone="rose"
             />
             <MetricCard
               icon={<PiggyBank size={18} />}
               label="Saldo"
               value={currency(metrics.balance)}
               tone={metrics.balance >= 0 ? 'blue' : 'rose'}
-            />
-            <MetricCard
-              icon={<Scale size={18} />}
-              label="Uso del ingreso"
-              value={`${metrics.coverage.toFixed(1)}%`}
-              tone={metrics.coverage < 80 ? 'blue' : 'rose'}
             />
           </section>
 
@@ -957,6 +979,7 @@ function App() {
                           Desde {monthLabel(item.startsOn)}
                           {item.endsOn ? ` hasta ${monthLabel(item.endsOn)}` : ''}
                         </small>
+                        {item.isProrated ? <small>Prorrateado anual</small> : null}
                       </div>
                       <div className="item-actions">
                         <span className="pill neutral">{currency(item.amount)}</span>
@@ -1523,6 +1546,19 @@ function App() {
                           }))
                         }
                       />
+                    </label>
+                    <label className="check-item">
+                      <input
+                        type="checkbox"
+                        checked={fixedExpense.isProrated}
+                        onChange={(event) =>
+                          setFixedExpense((current) => ({
+                            ...current,
+                            isProrated: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Es un gasto anual prorrateado</span>
                     </label>
                     <label>
                       Detalle

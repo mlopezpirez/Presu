@@ -268,6 +268,7 @@ async function getSupabaseSnapshot(): Promise<FinanceSnapshot> {
     category: item.category_name ?? 'Sin categoría',
     dueDay: item.due_day,
     ownerLabel: item.owner_label ?? '',
+    isProrated: Boolean(item.is_prorated),
     startsOn: item.starts_on,
     endsOn: item.ends_on ?? undefined,
     createdAt: item.created_at,
@@ -561,6 +562,7 @@ async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft, 
         owner_label: draft.ownerLabel,
         amount: draft.amount,
         due_day: draft.dueDay,
+        is_prorated: draft.isProrated,
         starts_on: start,
       })
       .eq('id', id)
@@ -590,6 +592,7 @@ async function updateSupabaseFixedExpense(id: string, draft: FixedExpenseDraft, 
     owner_label: draft.ownerLabel,
     amount: draft.amount,
     due_day: draft.dueDay,
+    is_prorated: draft.isProrated,
     starts_on: start,
     ends_on: current.ends_on ?? null,
   })
@@ -703,6 +706,7 @@ async function addSupabaseFixedExpense(draft: FixedExpenseDraft) {
     owner_label: draft.ownerLabel,
     amount: draft.amount,
     due_day: draft.dueDay,
+    is_prorated: draft.isProrated,
     starts_on: draft.startsOn,
   })
 

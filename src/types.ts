@@ -24,6 +24,7 @@ export type FixedExpense = {
   category: string
   dueDay: number
   ownerLabel: string
+  isProrated: boolean
   startsOn: string
   endsOn?: string
   createdAt: string
