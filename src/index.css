@@ -194,6 +194,11 @@ button {
   gap: 12px;
 }
 
+.totals-actions {
+  justify-content: space-between;
+  margin: 4px 0 18px;
+}
+
 .muted {
   color: #7a6c5e;
 }

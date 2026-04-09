@@ -137,6 +137,7 @@ function App() {
   const [duplicateConfirmationRequired, setDuplicateConfirmationRequired] = useState(false)
   const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
   const [selectedScenario, setSelectedScenario] = useState<FinanceSnapshot['scenarios'][number] | null>(null)
+  const [isTotalsBreakdownOpen, setIsTotalsBreakdownOpen] = useState(false)
   const currentMonth = todayLocalIso().slice(0, 7)
 
   useEffect(() => {
@@ -937,6 +938,21 @@ function App() {
             </div>
           </section>
 
+          <div className="panel-actions totals-actions">
+            <p className="muted">
+              {periodMode === 'all'
+                ? `Totales acumulados en ${metrics.monthsCount} meses`
+                : `Totales de ${monthLabel(`${effectiveFixedPeriod}-01`)}`}
+            </p>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setIsTotalsBreakdownOpen(true)}
+            >
+              Ver desglose
+            </button>
+          </div>
+
           <section className="metric-grid">
             <MetricCard
               icon={<Wallet size={18} />}
@@ -1609,6 +1625,78 @@ function App() {
                     <p className="muted">Este escenario no tiene cambios cargados.</p>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isTotalsBreakdownOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="panel-heading">
+              <div>
+                <p className="section-kicker">Totales</p>
+                <h2>
+                  {periodMode === 'all'
+                    ? 'Desglose acumulado'
+                    : `Desglose de ${monthLabel(`${effectiveFixedPeriod}-01`)}`}
+                </h2>
+              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setIsTotalsBreakdownOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="stack-form">
+              <div className="scenario-box">
+                <h3>Cómo se arma el total</h3>
+                <dl className="scenario-breakdown">
+                  <div>
+                    <dt>Ingresos del período</dt>
+                    <dd>{currency(metrics.visibleIncome)}</dd>
+                  </div>
+                  <div>
+                    <dt>Gastos variables</dt>
+                    <dd>{currency(metrics.visibleVariableExpenses)}</dd>
+                  </div>
+                  <div>
+                    <dt>Gastos fijos mensuales</dt>
+                    <dd>{currency(metrics.visibleCoreFixedExpenses)}</dd>
+                  </div>
+                  <div>
+                    <dt>Anuales prorrateados</dt>
+                    <dd>{currency(metrics.visibleProratedExpenses)}</dd>
+                  </div>
+                  <div>
+                    <dt>Presupuesto real</dt>
+                    <dd>{currency(metrics.totalExpensesWithoutProrated)}</dd>
+                  </div>
+                  <div>
+                    <dt>Gasto total presupuestado</dt>
+                    <dd>{currency(metrics.totalExpenses)}</dd>
+                  </div>
+                  <div>
+                    <dt>Saldo proyectado del período</dt>
+                    <dd>{currency(metrics.balance)}</dd>
+                  </div>
+                  {isCurrentMonthView ? (
+                    <>
+                      <div>
+                        <dt>Fijos ya marcados como pagados</dt>
+                        <dd>{currency(metrics.paidFixedExpensesForCurrentMonth)}</dd>
+                      </div>
+                      <div>
+                        <dt>Saldo al momento</dt>
+                        <dd>{currency(metrics.currentMomentBalance)}</dd>
+                      </div>
+                    </>
+                  ) : null}
+                </dl>
               </div>
             </div>
           </div>
