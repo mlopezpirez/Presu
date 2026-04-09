@@ -87,6 +87,14 @@ const initialScenario: ScenarioDraft = {
 }
 
 type AddFlowMode = 'menu' | 'manual' | 'ticket'
+type DashboardMetricKey =
+  | 'income'
+  | 'variables'
+  | 'fixed'
+  | 'prorated'
+  | 'total'
+  | 'balance'
+  | 'current'
 type EditingTarget =
   | { kind: 'transaction'; id: string }
   | { kind: 'fixedExpense'; id: string }
@@ -137,7 +145,7 @@ function App() {
   const [duplicateConfirmationRequired, setDuplicateConfirmationRequired] = useState(false)
   const [editingTarget, setEditingTarget] = useState<EditingTarget>(null)
   const [selectedScenario, setSelectedScenario] = useState<FinanceSnapshot['scenarios'][number] | null>(null)
-  const [isTotalsBreakdownOpen, setIsTotalsBreakdownOpen] = useState(false)
+  const [selectedMetric, setSelectedMetric] = useState<DashboardMetricKey | null>(null)
   const currentMonth = todayLocalIso().slice(0, 7)
 
   useEffect(() => {
@@ -234,6 +242,84 @@ function App() {
     )
   }, [effectiveFixedPeriod, filteredFixedExpenses, periodMode, snapshot])
 
+  const breakdownPeriods = useMemo(() => {
+    if (!snapshot) {
+      return []
+    }
+
+    return periodMode === 'all' ? snapshot.availablePeriods : [effectiveFixedPeriod]
+  }, [effectiveFixedPeriod, periodMode, snapshot])
+
+  const incomeBreakdown = useMemo(
+    () =>
+      periodTransactions
+        .filter((item) => item.type === 'income')
+        .map((item) => ({
+          id: item.id,
+          label: item.title,
+          meta: monthLabel(item.occurredOn),
+          amount: item.amount,
+        })),
+    [periodTransactions],
+  )
+
+  const variableBreakdown = useMemo(
+    () =>
+      visibleTransactions
+        .filter((item) => item.type === 'expense')
+        .map((item) => ({
+          id: item.id,
+          label: item.title,
+          meta: `${item.category} · ${monthLabel(item.occurredOn)}`,
+          amount: item.amount,
+        })),
+    [visibleTransactions],
+  )
+
+  const fixedBreakdown = useMemo(
+    () =>
+      breakdownPeriods.flatMap((period) =>
+        filteredFixedExpenses
+          .filter((item) => isFixedExpenseActiveForPeriod(item, period) && !item.isProrated)
+          .map((item) => ({
+            id: `${period}-${item.id}`,
+            label: item.name,
+            meta: `${item.category} · ${monthLabel(`${period}-01`)}`,
+            amount: item.amount,
+          })),
+      ),
+    [breakdownPeriods, filteredFixedExpenses],
+  )
+
+  const proratedBreakdown = useMemo(
+    () =>
+      breakdownPeriods.flatMap((period) =>
+        filteredFixedExpenses
+          .filter((item) => isFixedExpenseActiveForPeriod(item, period) && item.isProrated)
+          .map((item) => ({
+            id: `${period}-${item.id}`,
+            label: item.name,
+            meta: `${item.category} · ${monthLabel(`${period}-01`)}`,
+            amount: item.amount,
+          })),
+      ),
+    [breakdownPeriods, filteredFixedExpenses],
+  )
+
+  const paidFixedBreakdown = useMemo(
+    () =>
+      filteredFixedExpenses
+        .filter((item) => isFixedExpenseActiveForPeriod(item, effectiveFixedPeriod))
+        .filter((item) => paidFixedExpenseIds.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          label: item.name,
+          meta: `${item.category} · ${monthLabel(`${effectiveFixedPeriod}-01`)}`,
+          amount: item.amount,
+        })),
+    [effectiveFixedPeriod, filteredFixedExpenses, paidFixedExpenseIds],
+  )
+
   const metrics = useMemo(() => {
     if (!snapshot) {
       return null
@@ -329,6 +415,92 @@ function App() {
       .map(([category, total]) => ({ category, total }))
       .sort((a, b) => b.total - a.total)
   }, [visibleFixedExpenses, visibleTransactions])
+
+  const metricDetail = useMemo(() => {
+    if (!metrics || !selectedMetric) {
+      return null
+    }
+
+    if (selectedMetric === 'income') {
+      return {
+        title: 'Ingreso del período',
+        total: metrics.visibleIncome,
+        items: incomeBreakdown,
+        summary: [],
+      }
+    }
+
+    if (selectedMetric === 'variables') {
+      return {
+        title: 'Gastos variables',
+        total: metrics.visibleVariableExpenses,
+        items: variableBreakdown,
+        summary: [],
+      }
+    }
+
+    if (selectedMetric === 'fixed') {
+      return {
+        title: 'Gastos fijos',
+        total: metrics.visibleCoreFixedExpenses,
+        items: fixedBreakdown,
+        summary: [],
+      }
+    }
+
+    if (selectedMetric === 'prorated') {
+      return {
+        title: 'Anuales prorrateados',
+        total: metrics.visibleProratedExpenses,
+        items: proratedBreakdown,
+        summary: [],
+      }
+    }
+
+    if (selectedMetric === 'total') {
+      return {
+        title: 'Gasto total presupuestado',
+        total: metrics.totalExpenses,
+        items: [],
+        summary: [
+          { label: 'Gastos variables', amount: metrics.visibleVariableExpenses },
+          { label: 'Gastos fijos', amount: metrics.visibleCoreFixedExpenses },
+          { label: 'Anuales prorrateados', amount: metrics.visibleProratedExpenses },
+        ],
+      }
+    }
+
+    if (selectedMetric === 'balance') {
+      return {
+        title: 'Saldo',
+        total: metrics.balance,
+        items: [],
+        summary: [
+          { label: 'Ingreso del período', amount: metrics.visibleIncome },
+          { label: 'Gasto total presupuestado', amount: -metrics.totalExpenses },
+        ],
+      }
+    }
+
+    return {
+      title: 'Saldo al momento',
+      total: metrics.currentMomentBalance,
+      items: paidFixedBreakdown,
+      summary: [
+        { label: 'Ingreso del período', amount: metrics.visibleIncome },
+        { label: 'Gastos variables cargados', amount: -metrics.visibleVariableExpenses },
+        { label: 'Fijos marcados como pagados', amount: -metrics.paidFixedExpensesForCurrentMonth },
+      ],
+    }
+  }, [
+    fixedBreakdown,
+    incomeBreakdown,
+    metrics,
+    paidFixedBreakdown,
+    proratedBreakdown,
+    selectedMetric,
+    variableBreakdown,
+  ])
 
   const scenarioPreview = useMemo(() => {
     if (!snapshot || !metrics) {
@@ -938,57 +1110,48 @@ function App() {
             </div>
           </section>
 
-          <div className="panel-actions totals-actions">
-            <p className="muted">
-              {periodMode === 'all'
-                ? `Totales acumulados en ${metrics.monthsCount} meses`
-                : `Totales de ${monthLabel(`${effectiveFixedPeriod}-01`)}`}
-            </p>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setIsTotalsBreakdownOpen(true)}
-            >
-              Ver desglose
-            </button>
-          </div>
-
           <section className="metric-grid">
             <MetricCard
               icon={<Wallet size={18} />}
               label="Ingreso del período"
               value={currency(metrics.visibleIncome)}
               tone="emerald"
+              onDetails={() => setSelectedMetric('income')}
             />
             <MetricCard
               icon={<TrendingUp size={18} />}
               label="Gastos variables"
               value={currency(metrics.visibleVariableExpenses)}
               tone="amber"
+              onDetails={() => setSelectedMetric('variables')}
             />
             <MetricCard
               icon={<Landmark size={18} />}
               label="Gastos fijos"
               value={currency(metrics.visibleCoreFixedExpenses)}
               tone="blue"
+              onDetails={() => setSelectedMetric('fixed')}
             />
             <MetricCard
               icon={<CalendarRange size={18} />}
               label="Anuales prorrateados"
               value={currency(metrics.visibleProratedExpenses)}
               tone="blue"
+              onDetails={() => setSelectedMetric('prorated')}
             />
             <MetricCard
               icon={<Scale size={18} />}
               label="Gasto total presupuestado"
               value={currency(metrics.totalExpenses)}
               tone="rose"
+              onDetails={() => setSelectedMetric('total')}
             />
             <MetricCard
               icon={<PiggyBank size={18} />}
               label="Saldo"
               value={currency(metrics.balance)}
               tone={metrics.balance >= 0 ? 'blue' : 'rose'}
+              onDetails={() => setSelectedMetric('balance')}
             />
             {isCurrentMonthView ? (
               <MetricCard
@@ -996,6 +1159,7 @@ function App() {
                 label="Saldo al momento"
                 value={currency(metrics.currentMomentBalance)}
                 tone={metrics.currentMomentBalance >= 0 ? 'emerald' : 'rose'}
+                onDetails={() => setSelectedMetric('current')}
               />
             ) : null}
           </section>
@@ -1631,72 +1795,73 @@ function App() {
         </div>
       ) : null}
 
-      {isTotalsBreakdownOpen ? (
+      {metricDetail ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal-card">
             <div className="panel-heading">
               <div>
-                <p className="section-kicker">Totales</p>
-                <h2>
-                  {periodMode === 'all'
-                    ? 'Desglose acumulado'
-                    : `Desglose de ${monthLabel(`${effectiveFixedPeriod}-01`)}`}
-                </h2>
+                <p className="section-kicker">Composición</p>
+                <h2>{metricDetail.title}</h2>
               </div>
               <button
                 className="secondary-button"
                 type="button"
-                onClick={() => setIsTotalsBreakdownOpen(false)}
+                onClick={() => setSelectedMetric(null)}
               >
                 Cerrar
               </button>
             </div>
 
+            <div className="scenario-preview detail-preview">
+              <MetricCard
+                icon={<Scale size={18} />}
+                label="Total"
+                value={currency(metricDetail.total)}
+                tone={metricDetail.total >= 0 ? 'blue' : 'rose'}
+              />
+            </div>
+
             <div className="stack-form">
               <div className="scenario-box">
-                <h3>Cómo se arma el total</h3>
+                <h3>Cómo se compone</h3>
                 <dl className="scenario-breakdown">
-                  <div>
-                    <dt>Ingresos del período</dt>
-                    <dd>{currency(metrics.visibleIncome)}</dd>
-                  </div>
-                  <div>
-                    <dt>Gastos variables</dt>
-                    <dd>{currency(metrics.visibleVariableExpenses)}</dd>
-                  </div>
-                  <div>
-                    <dt>Gastos fijos mensuales</dt>
-                    <dd>{currency(metrics.visibleCoreFixedExpenses)}</dd>
-                  </div>
-                  <div>
-                    <dt>Anuales prorrateados</dt>
-                    <dd>{currency(metrics.visibleProratedExpenses)}</dd>
-                  </div>
-                  <div>
-                    <dt>Presupuesto real</dt>
-                    <dd>{currency(metrics.totalExpensesWithoutProrated)}</dd>
-                  </div>
-                  <div>
-                    <dt>Gasto total presupuestado</dt>
-                    <dd>{currency(metrics.totalExpenses)}</dd>
-                  </div>
-                  <div>
-                    <dt>Saldo proyectado del período</dt>
-                    <dd>{currency(metrics.balance)}</dd>
-                  </div>
-                  {isCurrentMonthView ? (
-                    <>
-                      <div>
-                        <dt>Fijos ya marcados como pagados</dt>
-                        <dd>{currency(metrics.paidFixedExpensesForCurrentMonth)}</dd>
-                      </div>
-                      <div>
-                        <dt>Saldo al momento</dt>
-                        <dd>{currency(metrics.currentMomentBalance)}</dd>
-                      </div>
-                    </>
+                  {metricDetail.summary.map((item) => (
+                    <div key={item.label}>
+                      <dt>{item.label}</dt>
+                      <dd>{`${item.amount >= 0 ? '+' : '-'}${currency(Math.abs(item.amount))}`}</dd>
+                    </div>
+                  ))}
+                  {metricDetail.summary.length === 0 ? (
+                    <div>
+                      <dt>Total</dt>
+                      <dd>{currency(metricDetail.total)}</dd>
+                    </div>
                   ) : null}
                 </dl>
+              </div>
+
+              <div className="scenario-box">
+                <h3>Detalle de ítems</h3>
+                <div className="list-block compact-list">
+                  {metricDetail.items.length > 0 ? (
+                    metricDetail.items.map((item) => (
+                      <article className="list-item" key={item.id}>
+                        <div>
+                          <strong>{item.label}</strong>
+                          <p>{item.meta}</p>
+                        </div>
+                        <div className="item-actions">
+                          <span className="pill neutral">{currency(item.amount)}</span>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="muted">
+                      Este monto se explica mejor con la composición de arriba que con ítems
+                      individuales.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -2062,14 +2227,20 @@ type MetricCardProps = {
   label: string
   value: string
   tone: 'emerald' | 'amber' | 'blue' | 'rose'
+  onDetails?: () => void
 }
 
-function MetricCard({ icon, label, value, tone }: MetricCardProps) {
+function MetricCard({ icon, label, value, tone, onDetails }: MetricCardProps) {
   return (
     <article className={`metric-card ${tone}`}>
       <div className="metric-icon">{icon}</div>
       <p>{label}</p>
       <strong>{value}</strong>
+      {onDetails ? (
+        <button className="metric-detail-button" type="button" onClick={onDetails}>
+          Ver composición
+        </button>
+      ) : null}
     </article>
   )
 }

@@ -282,6 +282,20 @@ button {
   line-height: 1;
 }
 
+.metric-detail-button {
+  margin-top: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #6b4f2a;
+  font-weight: 700;
+  text-align: left;
+}
+
+.metric-detail-button:hover {
+  text-decoration: underline;
+}
+
 .metric-icon {
   width: 42px;
   height: 42px;
